@@ -27,35 +27,13 @@ The hosted service at [frostbanner.com](https://frostbanner.com) adds the dashbo
 
 ## Install
 
-### With the FrostBanner dashboard (recommended)
-
 Create a free account at [app.frostbanner.com](https://app.frostbanner.com/app/), add your site and paste one line into your `<head>`, before any other script:
 
 ```html
 <script src="https://app.frostbanner.com/v1/fb.js" data-site="YOUR_SITE_ID"></script>
 ```
 
-Settings published in the dashboard are loaded automatically, and every decision is stored in your consent log.
-
-### Standalone (no account)
-
-You can also host `dist/fb.min.js` yourself and configure it inline. Without an `endpoint` nothing is sent anywhere and no consent log is kept.
-
-```html
-<script>
-  window.frostBannerConfig = {
-    template: 'frost',              // frost, midnight, glacier, aurora, obsidian, porthole, nightfall,
-                                    // pebble, paper, mint, bubble, whisper, biscuit, cocoa
-    lang: 'en',                     // 'en' or 'pt'; null = visitor's browser language
-    categories: ['necessary', 'analytics', 'marketing', 'functional'],
-    policyUrl: '/cookie-policy/',
-    remote: false
-  };
-</script>
-<script src="/js/fb.min.js"></script>
-```
-
-See [`examples/index.html`](examples/index.html) for a complete page.
+Style, texts, categories and language are set in the dashboard and published without touching your site again. Every decision is stored in your consent log.
 
 ## Block scripts until consent
 
@@ -79,32 +57,12 @@ Rename `src` to `data-src` and add the category:
 
 Until the visitor accepts, a placeholder with an "Allow and show" button is shown and nothing is loaded from the third party. The category must be listed in `categories`.
 
-## Options
-
-| Option | Default | Description |
-| --- | --- | --- |
-| `template` | `'frost'` | Visual preset |
-| `layout` | from template | `corner`, `bar`, `center`, `pill`, `chat`, `split` |
-| `theme` | from template | `light`, `dark`, `tint` |
-| `accent` | from template | Main colour, e.g. `'#2b64d9'` |
-| `radius`, `blur` | from template | Corner radius and glass blur in px |
-| `glass`, `glow`, `icon` | from template | Visual switches |
-| `lang` | `null` | `'en'`, `'pt'` or `null` for the browser language |
-| `categories` | all four | Categories shown to the visitor (`necessary` is always on) |
-| `policyUrl` | `'#'` | Link to your cookie policy |
-| `texts` | `{}` | Replace any text, e.g. `{ en: { title: 'Cookies?' } }` |
-| `maxAgeDays` | `180` | Ask again after this many days |
-| `branding` | `true` | Show "Powered by FrostBanner" |
-| `geo` | `{ mode: 'all' }` | `{ mode: 'eu' }` shows the banner only to EU/EEA visitors (needs the hosted service) |
-| `container` | `null` | CSS selector to render inside an element (previews) |
-
 ## JavaScript API
 
 ```js
 FrostBanner.open();          // open the preferences
 FrostBanner.getConsent();    // { necessary: true, analytics: false, ... } or null
 FrostBanner.on('change', function (e) { console.log(e.choices, e.source); });
-FrostBanner.configure({ template: 'aurora', accent: '#8b6cff' });
 FrostBanner.reset();         // forget the choice (testing)
 ```
 
@@ -125,6 +83,10 @@ When the hosted service is used, each decision is sent to the consent log with t
 ## Compliance
 
 FrostBanner helps you stay GDPR-compliant: consent before tracking, equal reject option, granular categories and a record of each decision. You remain responsible for listing the cookies your site uses and for your cookie policy. FrostBanner is not legal advice and is **not** an IAB TCF / Google-certified CMP, so it is not suitable for sites that show Google AdSense or Ad Manager ads to visitors in the EEA, the UK or Switzerland.
+
+## Security
+
+Found a vulnerability? Please email support@frostbanner.com instead of opening a public report. See [SECURITY.md](SECURITY.md).
 
 ## Build
 
