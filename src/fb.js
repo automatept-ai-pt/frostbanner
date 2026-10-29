@@ -12,10 +12,17 @@
     marketing: ['ad_storage', 'ad_user_data', 'ad_personalization'],
     functional: ['functionality_storage', 'personalization_storage']
   };
+  // Default long text (T.*.text) is built from the active categories at render time — see defText().
+  // These are the clauses the sentence is made of, one per category.
+  var CATTXT = {
+    en: { necessary: 'run this site', analytics: 'measure traffic', marketing: 'personalise ads', functional: 'remember your preferences',
+      lead: 'We use cookies to ', and: ' and ', tail: '. You choose which ones we can use.' },
+    pt: { necessary: 'o site funcionar', analytics: 'medir o tráfego', marketing: 'personalizar anúncios', functional: 'lembrar as suas preferências',
+      lead: 'Usamos cookies para ', and: ' e ', tail: '. Escolha quais podemos usar.' }
+  };
   var T = {
     en: {
       title: 'We value your privacy',
-      text: 'We use cookies to run this site, measure traffic and personalise ads. You choose which ones we can use.',
       short: 'We use cookies to improve your experience.',
       accept: 'Accept all', reject: 'Reject all', prefs: 'Customise', save: 'Save choices',
       policy: 'Cookie policy', manage: 'Cookie settings', always: 'Always on',
@@ -29,7 +36,6 @@
     },
     pt: {
       title: 'A sua privacidade importa',
-      text: 'Usamos cookies para o site funcionar, medir o tráfego e personalizar anúncios. Escolha quais podemos usar.',
       short: 'Usamos cookies para melhorar a sua experiência.',
       accept: 'Aceitar todos', reject: 'Rejeitar todos', prefs: 'Personalizar', save: 'Guardar escolhas',
       policy: 'Política de cookies', manage: 'Definições de cookies', always: 'Sempre ativos',
@@ -123,6 +129,14 @@
   }
   function each(fn) { cfg.categories.forEach(fn); }
   function pick(fn) { var o = {}; each(function (k) { o[k] = k === 'necessary' ? true : !!fn(k); }); return o; }
+  // Default long text names only the categories actually in use (e.g. no "personalise ads" if Marketing is off).
+  function defText(l) {
+    var m = CATTXT[l] || CATTXT.en, parts = [];
+    each(function (k) { if (m[k]) parts.push(m[k]); });
+    if (!parts.length) parts.push(m.necessary);
+    var joined = parts.length > 1 ? parts.slice(0, -1).join(', ') + m.and + parts[parts.length - 1] : parts[0];
+    return m.lead + joined + m.tail;
+  }
 
   // ---------- storage: cookie, then localStorage, then memory ----------
   function readStore() {
@@ -274,7 +288,8 @@
   // ---------- UI (Shadow DOM, no global styles) ----------
   function tx() {
     var l = String(cfg.lang || navigator.language || 'en').slice(0, 2).toLowerCase();
-    return assign({}, T[l] || T.en, cfg.texts[l] || {});
+    var base = T[l] || T.en, bl = T[l] ? l : 'en';
+    return assign({}, base, { text: defText(bl) }, cfg.texts[l] || {});
   }
   function css() {
     return ':host{all:initial}' +
@@ -310,6 +325,7 @@
       '.sw::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .15s}' +
       '.sw:checked{background:var(--a)}.sw:checked::after{transform:translateX(16px)}.sw:disabled{opacity:.55;cursor:default}' +
       '.brand{margin-top:12px;font-size:11px;color:var(--mut);text-align:right}' +
+      '.btns .brand{flex:0 0 100%;margin-top:8px}' +
       '.chat{position:fixed;z-index:2147483000;right:16px;bottom:16px;width:min(330px,calc(100% - 32px));display:flex;flex-direction:column;align-items:flex-end;gap:14px}' +
       '.chat .card{position:relative;width:100%;border-radius:var(--r) var(--r) 4px var(--r)}' +
       '.chat .card.m{padding:16px 16px 14px;font-size:13.5px}.chat .m p b{display:block;color:var(--fg);font-size:14.5px;margin-bottom:3px}' +
@@ -377,22 +393,20 @@
     var h = '<div class="card in ' + (v === 'main' ? 'm' : 'p') + '" role="dialog" aria-modal="' + (lay === 'center') + '" aria-labelledby="fbt" aria-describedby="fbd">';
     var pol = ' <a href="' + esc(cfg.policyUrl) + '" target="_blank" rel="noopener">' + esc(t.policy) + '</a>';
     var typing = false;
-    var brand = cfg.branding ? '<div class="brand">Powered by FrostBanner</div>' : '', after = '', inner = false;
+    var brand = cfg.branding ? '<div class="brand">Powered by FrostBanner</div>' : '', after = '';
     if (v === 'main' && lay === 'chat') {
       var typing = !cfg.container && !typed && !(w.matchMedia && w.matchMedia('(prefers-reduced-motion: reduce)').matches);
       if (typing) h = h.replace('class="card in m"', 'class="card in m typing"');
       h += '<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><p id="fbd"><b id="fbt">' + esc(t.title) + '</b>' + esc(t.text) + pol + '</p>' +
         '<div class="btns"><button class="pri" data-a="reject">' + esc(t.reject) + '</button>' +
         '<button class="pri" data-a="accept">' + esc(t.accept) + '</button>' +
-        '<button class="lnk" data-a="prefs">' + esc(t.prefs) + '</button></div>' + brand;
+        '<button class="lnk" data-a="prefs">' + esc(t.prefs) + '</button>' + brand + '</div>';
       after = '<button class="ava in" data-a="prefs" aria-label="' + esc(t.manage) + '">' + COOKIE + '</button>';
-      inner = true;
     } else if (v === 'main' && lay === 'split') {
       h += '<div class="art">' + ART + '</div><div class="body"><h2 id="fbt">' + esc(t.title) + '</h2><p id="fbd">' + esc(t.text) + pol + '</p>' +
         '<div class="btns"><button class="pri" data-a="reject">' + esc(t.reject) + '</button>' +
         '<button class="pri" data-a="accept">' + esc(t.accept) + '</button>' +
-        '<button class="lnk" data-a="prefs">' + esc(t.prefs) + '</button></div>' + brand + '</div>';
-      inner = true;
+        '<button class="lnk" data-a="prefs">' + esc(t.prefs) + '</button>' + brand + '</div></div>';
     } else if (v === 'main' && lay === 'pill') {
       h += '<p id="fbd"><span id="fbt">' + esc(t.short) + '</span>' + pol + '</p>' +
         '<div class="btns"><button class="lnk" data-a="prefs">' + esc(t.prefs) + '</button>' +
@@ -403,7 +417,7 @@
         '<h2 id="fbt">' + esc(t.title) + '</h2>' + (cfg.icon ? '</div>' : '') + '<p id="fbd">' + esc(t.text) + pol + '</p></div>' +
         '<div class="btns"><button class="pri" data-a="reject">' + esc(t.reject) + '</button>' +
         '<button class="pri" data-a="accept">' + esc(t.accept) + '</button>' +
-        '<button class="lnk" data-a="prefs">' + esc(t.prefs) + '</button></div>';
+        '<button class="lnk" data-a="prefs">' + esc(t.prefs) + '</button>' + brand + '</div>';
     } else {
       h += '<h2 id="fbt">' + esc(t.manage) + '</h2><p id="fbd">' + esc(t.text) + '</p><div class="cats">';
       each(function (k) {
@@ -415,9 +429,8 @@
       });
       h += '</div><div class="btns"><button class="pri" data-a="reject">' + esc(t.reject) + '</button>' +
         '<button class="pri" data-a="save">' + esc(t.save) + '</button>' +
-        '<button class="pri" data-a="accept">' + esc(t.accept) + '</button></div>';
+        '<button class="pri" data-a="accept">' + esc(t.accept) + '</button>' + brand + '</div>';
     }
-    if (!inner && !(v === 'main' && lay === 'pill')) h += brand;
     root.innerHTML = wrap(h + '</div>' + after, lay);
     if (typing) setTimeout(function () { typed = true; var c = root && root.querySelector('.typing'); if (c) c.classList.remove('typing'); }, 900);
     if (v === 'prefs' || lay === 'center') { var f = root.querySelector('.card button, .card input:not([disabled])'); if (f) f.focus({ preventScroll: true }); }
