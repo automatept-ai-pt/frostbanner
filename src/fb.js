@@ -1,4 +1,4 @@
-/*! FrostBanner v0.4.0 — beautiful cookie banners */
+/*! FrostBanner v0.4.1 — beautiful cookie banners */
 (function (w, d) {
   'use strict';
   if (w.FrostBanner) return;
@@ -324,7 +324,7 @@
       '.sw{-webkit-appearance:none;appearance:none;flex:none;width:38px;height:22px;margin:2px 0 0;border-radius:11px;background:var(--sw);position:relative;cursor:pointer;transition:background .15s}' +
       '.sw::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.35);transition:transform .15s}' +
       '.sw:checked{background:var(--a)}.sw:checked::after{transform:translateX(16px)}.sw:disabled{opacity:.55;cursor:default}' +
-      '.brand{margin-top:12px;font-size:11px;color:var(--mut);text-align:right}' +
+      '.brand{margin-top:12px;font-size:11px;color:var(--mut);text-align:right}.brand a{color:inherit;text-decoration:none}.brand a:hover,.brand a:focus-visible{text-decoration:underline}' +
       '.btns .brand{flex:0 0 100%;margin-top:8px}' +
       '.chat{position:fixed;z-index:2147483000;right:16px;bottom:16px;width:min(330px,calc(100% - 32px));display:flex;flex-direction:column;align-items:flex-end;gap:14px}' +
       '.chat .card{position:relative;width:100%;border-radius:var(--r) var(--r) 4px var(--r)}' +
@@ -393,7 +393,7 @@
     var h = '<div class="card in ' + (v === 'main' ? 'm' : 'p') + '" role="dialog" aria-modal="' + (lay === 'center') + '" aria-labelledby="fbt" aria-describedby="fbd">';
     var pol = ' <a href="' + esc(cfg.policyUrl) + '" target="_blank" rel="noopener">' + esc(t.policy) + '</a>';
     var typing = false;
-    var brand = cfg.branding ? '<div class="brand">Powered by FrostBanner</div>' : '', after = '';
+    var brand = cfg.branding ? '<div class="brand"><a href="https://frostbanner.com/?utm_source=banner&amp;utm_medium=powered_by&amp;utm_campaign=free" target="_blank" rel="nofollow noopener">Powered by FrostBanner</a></div>' : '', after = '';
     if (v === 'main' && lay === 'chat') {
       var typing = !cfg.container && !typed && !(w.matchMedia && w.matchMedia('(prefers-reduced-motion: reduce)').matches);
       if (typing) h = h.replace('class="card in m"', 'class="card in m typing"');
@@ -506,7 +506,7 @@
 
   // ---------- public API ----------
   w.FrostBanner = {
-    version: '0.4.0',
+    version: '0.4.1',
     open: function () { render('prefs'); },
     getConsent: function () { return state ? assign({}, state) : null; },
     on: function (e, f) { (L[e] = L[e] || []).push(f); },
