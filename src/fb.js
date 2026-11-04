@@ -1,4 +1,4 @@
-/*! FrostBanner v0.4.1 — beautiful cookie banners */
+/*! FrostBanner v0.4.2 — beautiful cookie banners */
 (function (w, d) {
   'use strict';
   if (w.FrostBanner) return;
@@ -364,7 +364,11 @@
     var h = '<div class="card in ' + (v === 'main' ? 'm' : 'p') + '" role="dialog" aria-modal="' + (lay === 'center') + '" aria-labelledby="fbt" aria-describedby="fbd">';
     var pol = ' <a href="' + esc(cfg.policyUrl) + '" target="_blank" rel="noopener">' + esc(t.policy) + '</a>';
     var typing = false;
-    var brand = cfg.branding ? '<div class="brand"><a href="https://frostbanner.com/?utm_source=banner&amp;utm_medium=powered_by&amp;utm_campaign=free" target="_blank" rel="nofollow noopener">Powered by FrostBanner</a></div>' : '', after = '';
+    // On sites that use the WordPress.org plugin the credit stays plain text:
+    // the plugin directory does not allow credit links without the owner's opt-in.
+    var viaWp = !!document.getElementById('frostbanner-js');
+    var brand = !cfg.branding ? '' : viaWp ? '<div class="brand">Powered by FrostBanner</div>' :
+      '<div class="brand"><a href="https://frostbanner.com/?utm_source=banner&amp;utm_medium=powered_by&amp;utm_campaign=free" target="_blank" rel="nofollow noopener">Powered by FrostBanner</a></div>', after = '';
     if (v === 'main' && lay === 'chat') {
       var typing = !cfg.container && !typed && !(w.matchMedia && w.matchMedia('(prefers-reduced-motion: reduce)').matches);
       if (typing) h = h.replace('class="card in m"', 'class="card in m typing"');
@@ -477,7 +481,7 @@
 
   // ---------- public API ----------
   w.FrostBanner = {
-    version: '0.4.1',
+    version: '0.4.2',
     open: function () { render('prefs'); },
     getConsent: function () { return state ? assign({}, state) : null; },
     on: function (e, f) { (L[e] = L[e] || []).push(f); },
