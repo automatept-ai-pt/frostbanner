@@ -455,6 +455,29 @@ if (!FB_LOCAL) {
     check('German banner: lang de, different fingerprint', 'lang de', { lang: l4 && l4.lang, text_hash: l4 && l4.text_hash },
       l4 && l4.lang === 'de' && l4.text_hash !== l1.text_hash);
 
+    // ---------- 8. Google Consent Mode ----------
+    group('8. Google Consent Mode');
+    var dl = function (pp, a, b) { return Array.prototype.filter.call(pp.W.dataLayer, function (e) { return e[0] === a && e[1] === b; }).map(function (e) { return e[2]; }); };
+    p = await open({});
+    var defs = dl(p, 'consent', 'default');
+    check('default: one Consent Mode default, all denied, wait 500, no region', '1 default, ad_storage denied, wait 500',
+      defs, defs.length === 1 && defs[0].ad_storage === 'denied' && defs[0].analytics_storage === 'denied' && defs[0].wait_for_update === 500 && !defs[0].region);
+    check('default: no ads_data_redaction / url_passthrough', 'none', dl(p, 'set', 'ads_data_redaction').concat(dl(p, 'set', 'url_passthrough')),
+      dl(p, 'set', 'ads_data_redaction').length === 0 && dl(p, 'set', 'url_passthrough').length === 0);
+    p.done();
+    p = await open({ cfg: JSON.stringify({ consentMode: { region: ['ES', 'pt-PT', 'bad region!', 7], waitForUpdate: 1500, adsDataRedaction: true, urlPassthrough: true } }) });
+    defs = dl(p, 'consent', 'default');
+    check('region: granted default everywhere, denied default for the listed regions', '2 defaults, second denied for ES, pt-PT',
+      defs, defs.length === 2 && defs[0].ad_storage === 'granted' && !defs[0].region &&
+        defs[1].ad_storage === 'denied' && JSON.stringify(defs[1].region) === '["ES","pt-PT"]' && defs[1].wait_for_update === 1500);
+    check('adsDataRedaction / urlPassthrough are set', 'both true', { redaction: dl(p, 'set', 'ads_data_redaction'), passthrough: dl(p, 'set', 'url_passthrough') },
+      dl(p, 'set', 'ads_data_redaction')[0] === true && dl(p, 'set', 'url_passthrough')[0] === true);
+    p.done();
+    p = await open({ cfg: JSON.stringify({ consentMode: { waitForUpdate: 'abc' } }) });
+    defs = dl(p, 'consent', 'default');
+    check('invalid waitForUpdate falls back to 500', 'wait 500', defs[0] && defs[0].wait_for_update, defs.length === 1 && defs[0].wait_for_update === 500);
+    p.done();
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');

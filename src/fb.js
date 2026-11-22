@@ -160,11 +160,34 @@
   // ---------- Google Consent Mode v2 ----------
   w.dataLayer = w.dataLayer || [];
   if (typeof w.gtag !== 'function') w.gtag = function () { w.dataLayer.push(arguments); };
-  function gcm(kind, c) {
+  // Options (inline config only: the default must be sent before any Google tag loads, i.e. before
+  // the dashboard settings arrive): consentMode: { region: ['ES', 'PT'], waitForUpdate: 500,
+  // adsDataRedaction: true, urlPassthrough: true }.
+  function gcmState(c) {
     var o = {};
     for (var k in GCM) GCM[k].forEach(function (x) { o[x] = c && c[k] ? 'granted' : 'denied'; });
-    if (kind === 'default') { o.security_storage = 'granted'; o.wait_for_update = 500; }
-    w.gtag('consent', kind, o);
+    return o;
+  }
+  function gcm(kind, c) {
+    var o = gcmState(c);
+    if (kind === 'default') {
+      var g = cfg.consentMode && typeof cfg.consentMode === 'object' ? cfg.consentMode : {};
+      var wait = +g.waitForUpdate;
+      o.security_storage = 'granted';
+      o.wait_for_update = g.waitForUpdate != null && wait >= 0 && wait <= 1e4 ? wait : 500;
+      var reg = (Array.isArray(g.region) ? g.region : []).filter(function (r) { return typeof r === 'string' && /^[A-Za-z]{2}(-[A-Za-z0-9]{1,3})?$/.test(r); });
+      if (reg.length) {
+        // Denied by default only in these regions (Google uses the most specific default);
+        // everywhere else the tags start granted. The owner's choice: off unless configured.
+        var all = gcmState(pick(function () { return true; }));
+        all.security_storage = 'granted';
+        w.gtag('consent', 'default', all);
+        o.region = reg;
+      }
+      w.gtag('consent', 'default', o);
+      if (g.adsDataRedaction === true) w.gtag('set', 'ads_data_redaction', true);
+      if (g.urlPassthrough === true) w.gtag('set', 'url_passthrough', true);
+    } else w.gtag('consent', kind, o);
     emit('consentmode', { kind: kind, state: o });
   }
 

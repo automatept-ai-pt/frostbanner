@@ -61,6 +61,25 @@ Until the visitor accepts, a placeholder with an "Allow and show" button is show
 
 Blocked scripts and iframes added later (single-page apps, lazy-loaded blocks) are handled the same way. Because of this, a blocked `<script type="text/plain" data-category>` that ends up in the page also runs when it comes from HTML inserted by JavaScript: if your site shows user-submitted HTML, make sure your sanitizer removes `<script>` elements whatever their `type`.
 
+## Google Consent Mode options
+
+FrostBanner sends the Consent Mode default (everything denied except `security_storage`) as soon as it loads, so it must be the first script in `<head>`. Optional settings go into an inline config before the FrostBanner tag (they cannot come from the dashboard: the default has to be sent before any Google tag loads):
+
+```html
+<script>
+  window.frostBannerConfig = {
+    consentMode: {
+      waitForUpdate: 500,        // ms Google tags wait for the visitor's choice (0–10000, default 500)
+      adsDataRedaction: true,    // gtag('set', 'ads_data_redaction', true)
+      urlPassthrough: true,      // gtag('set', 'url_passthrough', true)
+      region: ['ES', 'PT']       // deny by default only in these regions; elsewhere tags start granted
+    }
+  };
+</script>
+```
+
+Use `region` only if that is really what you want: outside the listed regions Google tags start with consent granted.
+
 ## JavaScript API
 
 ```js
