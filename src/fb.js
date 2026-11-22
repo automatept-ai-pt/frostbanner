@@ -130,6 +130,10 @@
     return m.lead + joined + m.tail;
   }
 
+  // Consent lifetime in days. A non-numeric or non-positive maxAgeDays would give "max-age=NaN"
+  // (a session cookie) and a record that never expires, so it falls back to the default.
+  function maxAge() { var n = +cfg.maxAgeDays; return n > 0 && n < 1e5 ? n : DEF.maxAgeDays; }
+
   // ---------- storage: cookie, then localStorage, then memory ----------
   function readStore() {
     var raw = null;
@@ -141,7 +145,7 @@
   function writeStore(o) {
     var s = JSON.stringify(o); mem = s;
     try {
-      d.cookie = KEY + '=' + encodeURIComponent(s) + ';path=/;max-age=' + (cfg.maxAgeDays * 86400) +
+      d.cookie = KEY + '=' + encodeURIComponent(s) + ';path=/;max-age=' + Math.round(maxAge() * 86400) +
         ';SameSite=Lax' + (location.protocol === 'https:' ? ';Secure' : '');
     } catch (e) {}
     try { w.localStorage.setItem(KEY, s); } catch (e) {}
@@ -509,7 +513,7 @@
     // check the age of the record itself (ts is Date.now(), in milliseconds).
     // A ts more than a day in the future (visitor's clock was set ahead) would never expire: rejected too.
     var age = typeof s.ts === 'number' ? Date.now() - s.ts : NaN;
-    if (!(age >= -864e5 && age <= (+cfg.maxAgeDays || DEF.maxAgeDays) * 864e5)) return false;
+    if (!(age >= -864e5 && age <= maxAge() * 864e5)) return false;
     return s.k ? s.k === catKey() : s.v === cfg.version;   // records before v0.3 have no k
   }
   // ---------- content added later (SPA routes, lazy-loaded blocks): same rules as on load ----------

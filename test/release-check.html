@@ -334,6 +334,20 @@ if (!FB_LOCAL) {
       phCount() === 1 && rp2.previousElementSibling && rp2.previousElementSibling.hasAttribute('data-fb-ph'));
     p.done();
 
+    // non-numeric maxAgeDays: default 180 days for the record and the cookie
+    p = await open({ age: 10, cfg: JSON.stringify({ maxAgeDays: 'abc' }) });
+    v = p.W.FrostBanner.getConsent();
+    check('maxAgeDays "abc": 10-day-old record is still restored (default 180)', 'restored', { consent: !!v }, !!v);
+    p.done();
+    p = await open({ age: 200, cfg: JSON.stringify({ maxAgeDays: -5 }) });
+    check('maxAgeDays -5: 200-day-old record is rejected (default 180)', 'banner shown', { banner: !!p.card() }, !!p.card());
+    p.W.FrostBanner.open();
+    p.sr().querySelector('button[data-a="reject"]').click();
+    var ck = p.W.cookieStore ? await p.W.cookieStore.get('fb_consent') : null;
+    var days = ck && ck.expires ? Math.round((ck.expires - Date.now()) / 864e5) : null;
+    check('maxAgeDays -5: consent cookie is persistent, 180 days', 'expires in 180 days', 'expires in ' + days + ' days', days === 180);
+    p.done();
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');
