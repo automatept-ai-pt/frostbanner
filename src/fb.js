@@ -328,7 +328,12 @@
     writeStore(stored);
     apply(c, action);
     log(stored, action);   // sendBeacon survives the reload
+    // The banner is replaced by the floating button: if the choice was made in the banner (focus
+    // inside it), focus moves to the button instead of being lost. Choices made elsewhere (the
+    // "Allow and show" button of an embed) keep the focus where it is.
+    var hadFocus = !!(root && root.activeElement);
     showFab();
+    if (hadFocus) focusIn('.fab');
     if (gone.length && cfg.reloadOnWithdraw !== false && !cfg.container) {
       emit('reload', { categories: gone });
       try { location.reload(); } catch (e) {}
@@ -459,7 +464,21 @@
       if (k) draft[k] = e.target.checked;
     });
     root.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && mode === 'banner' && view === 'prefs') { render(stored ? null : 'main'); }
+      if (mode !== 'banner') return;
+      // Escape leaves the preferences: back to the banner, or to the floating button if a choice
+      // was already made. On the main banner it does nothing on purpose: a choice is required.
+      if (e.key === 'Escape' && view === 'prefs') {
+        if (stored) { showFab(); focusIn('.fab'); } else { render('main'); focusIn('.card button'); }
+        return;
+      }
+      // Modal window (centre layout, aria-modal="true"): Tab stays inside the card.
+      if (e.key === 'Tab' && isModal()) {
+        var f = Array.prototype.slice.call(root.querySelectorAll('.card button, .card a[href], .card input:not([disabled])'));
+        if (!f.length) return;
+        var i = f.indexOf(root.activeElement);
+        if (e.shiftKey && i <= 0) { e.preventDefault(); f[f.length - 1].focus(); }
+        else if (!e.shiftKey && (i === -1 || i === f.length - 1)) { e.preventDefault(); f[0].focus(); }
+      }
     });
   }
   var COOKIE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
@@ -475,7 +494,7 @@
   function render(v) {
     if (v === null) return showFab();
     mount(); mode = 'banner'; view = v;
-    var t = tx(), lay = /^(corner|bar|center|pill|chat|split)$/.test(cfg.layout) ? cfg.layout : 'corner';
+    var t = tx(), lay = layout();
     var h = '<div class="card in ' + (v === 'main' ? 'm' : 'p') + '" role="dialog" aria-modal="' + (lay === 'center') + '" aria-labelledby="fbt" aria-describedby="fbd">';
     var pol = ' <a href="' + esc(safeUrl(cfg.policyUrl)) + '" target="_blank" rel="noopener">' + esc(t.policy) + '</a>';
     var typing = false;
@@ -530,6 +549,9 @@
     root.innerHTML = wrap('<button class="fab in" data-a="fab" aria-label="' + esc(tx().manage) + '" title="' + esc(tx().manage) + '">' +
       COOKIE + '</button>');
   }
+  function layout() { return /^(corner|bar|center|pill|chat|split)$/.test(cfg.layout) ? cfg.layout : 'corner'; }
+  function isModal() { return layout() === 'center'; }
+  function focusIn(sel) { var el = root && root.querySelector(sel); if (el) { try { el.focus({ preventScroll: true }); } catch (e) {} } }
   function rerender() { if (mode === 'banner') render(view); else if (mode === 'fab') showFab(); }
 
   // ---------- boot ----------

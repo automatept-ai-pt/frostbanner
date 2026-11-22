@@ -409,6 +409,36 @@ if (!FB_LOCAL) {
       !wd.reloaded && wd.analytics === false);
     wd.pp.done();
 
+    // ---------- 6. keyboard and focus ----------
+    group('6. Keyboard and focus');
+    var key = function (pp, k, shift) {
+      var el = pp.sr().activeElement || pp.sr().querySelector('.card');
+      el.dispatchEvent(new pp.W.KeyboardEvent('keydown', { key: k, shiftKey: !!shift, bubbles: true, composed: true, cancelable: true }));
+    };
+    var label = function (el) { return el ? (el.getAttribute('data-a') || el.getAttribute('data-c') || el.tagName) : 'none'; };
+    p = await open({ cfg: JSON.stringify({ layout: 'center' }) }, '6. Centre layout (modal): focus starts on the first button');
+    var foc = p.sr().querySelectorAll('.card button, .card a[href]');
+    check('modal: focus starts inside the card', 'first button (reject) focused', label(p.sr().activeElement), p.sr().activeElement === p.sr().querySelector('.card button'));
+    foc[foc.length - 1].focus(); key(p, 'Tab');
+    check('modal: Tab on the last control wraps to the first', label(foc[0]), label(p.sr().activeElement), p.sr().activeElement === foc[0]);
+    key(p, 'Tab', true);
+    check('modal: Shift+Tab on the first control wraps to the last', label(foc[foc.length - 1]), label(p.sr().activeElement), p.sr().activeElement === foc[foc.length - 1]);
+    key(p, 'Escape');
+    check('Escape on the main banner keeps it (a choice is required)', 'banner still shown', { banner: !!p.card() }, !!p.card());
+    var acc2 = p.sr().querySelector('button[data-a="accept"]'); acc2.focus(); acc2.click();
+    await tick(100);
+    check('after a choice in the banner, focus moves to the floating button', 'fab', label(p.sr().activeElement), label(p.sr().activeElement) === 'fab');
+    p.W.FrostBanner.open(); await tick(50);
+    key(p, 'Escape'); await tick(50);
+    check('Escape in preferences opened later returns to the floating button', 'fab focused', label(p.sr().activeElement), label(p.sr().activeElement) === 'fab');
+    p = await open({});
+    p.sr().querySelector('button[data-a="prefs"]').click(); await tick(50);
+    key(p, 'Escape'); await tick(50);
+    check('Escape in preferences before a choice returns to the banner, focus on its first button', 'main view, button focused',
+      { main: !!p.sr().querySelector('.card.m'), focused: label(p.sr().activeElement) },
+      !!p.sr().querySelector('.card.m') && !!p.sr().activeElement && p.sr().activeElement.tagName === 'BUTTON');
+    p.done();
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');
