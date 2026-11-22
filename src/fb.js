@@ -345,7 +345,18 @@
   function tx() {
     var l = String(cfg.lang || navigator.language || 'en').slice(0, 2).toLowerCase(); l = LALIAS[l] || l;
     var base = T[l] || T.en, bl = T[l] ? l : 'en';
-    return assign({}, base, { text: defText(bl) }, cfg.texts[l] || {});
+    // Custom texts may be missing or malformed (texts: null, texts.en: "x", c: null, title: 5):
+    // anything that is not an object / a string falls back to the built-in text.
+    var own = cfg.texts && typeof cfg.texts === 'object' ? cfg.texts[l] : null;
+    var t = assign({}, base, { text: defText(bl) }, own && typeof own === 'object' ? own : {});
+    for (var k in base) if (k !== 'c' && typeof t[k] !== 'string') t[k] = base[k];
+    if (typeof t.text !== 'string') t.text = defText(bl);
+    // Category texts are merged per category: a custom text for one category must not hide the
+    // switches of the others; an entry is used only if it is [name, description].
+    var oc = own && typeof own === 'object' ? own.c : null;
+    t.c = assign({}, base.c);
+    if (oc && typeof oc === 'object') for (var ck in oc) if (Array.isArray(oc[ck])) t.c[ck] = oc[ck];
+    return t;
   }
   function css() {
     return ':host{all:initial}' +
@@ -481,7 +492,7 @@
     } else {
       h += '<h2 id="fbt">' + esc(t.manage) + '</h2><p id="fbd">' + esc(t.text) + '</p><div class="cats">';
       each(function (k) {
-        var c = t.c[k]; if (!c) return;
+        var c = t.c[k]; if (!c || typeof c !== 'object') return;
         var nec = k === 'necessary';
         h += '<label class="cat"><span><b>' + esc(c[0]) + '</b><small>' + esc(c[1]) + '</small></span>' +
           '<input type="checkbox" role="switch" class="sw" data-c="' + k + '"' +

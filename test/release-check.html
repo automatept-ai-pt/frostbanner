@@ -348,6 +348,16 @@ if (!FB_LOCAL) {
     check('maxAgeDays -5: consent cookie is persistent, 180 days', 'expires in 180 days', 'expires in ' + days + ' days', days === 180);
     p.done();
 
+    // malformed custom texts must not break the banner
+    for (const tx of [null, 'x', { en: null }, { en: 'x' }, { en: { c: null, title: 5, embed: null } }, { en: { c: { analytics: 'oops' } } }]) {
+      p = await open({ cfg: JSON.stringify({ texts: tx }) });
+      var okMain = !!p.card() && !/undefined|null|\[object/.test(p.sr().querySelector('.card').textContent);
+      var okPrefs = false;
+      try { p.W.FrostBanner.open(); okPrefs = p.sr().querySelectorAll('[data-c]').length >= 1; } catch (e) { okPrefs = false; }
+      check('texts ' + JSON.stringify(tx) + ': banner and preferences render', 'banner + switches, no "undefined"', { banner: okMain, prefs: okPrefs }, okMain && okPrefs);
+      p.done();
+    }
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');
