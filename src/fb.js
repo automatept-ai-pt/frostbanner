@@ -181,6 +181,12 @@
       runScript(runQ.shift());
     }
   }
+  // JavaScript MIME types from the HTML spec, plus "module". Case-insensitive, parameters ignored.
+  function isJs(t) {
+    t = String(t || '').split(';')[0].trim().toLowerCase();
+    return !t || t === 'module' ||
+      /^(text|application)\/(x-)?(java|ecma)script$/.test(t) || /^text\/(javascript1\.[0-5]|jscript|livescript)$/.test(t);
+  }
   function runScript(o) {
     var cat = o.getAttribute('data-category'), ext = o.hasAttribute('src');
     var s = d.createElement('script');
@@ -190,7 +196,9 @@
     }
     s.type = o.getAttribute('data-type') || 'text/javascript';
     s.setAttribute('data-fb-clone', '');
-    if (ext && !o.hasAttribute('async')) {
+    // Wait only for types the browser actually loads: for anything else (data-type="text/x-template",
+    // "application/ld+json", …) no load/error ever fires and the queue would stall.
+    if (ext && !o.hasAttribute('async') && isJs(s.type)) {
       s.async = false;
       waiting++;
       var gen = runGen, done = function () {
@@ -473,7 +481,40 @@
     if (typeof s.ts !== 'number' || Date.now() - s.ts > (+cfg.maxAgeDays || DEF.maxAgeDays) * 864e5) return false;
     return s.k ? s.k === catKey() : s.v === cfg.version;   // records before v0.3 have no k
   }
+  // ---------- content added later (SPA routes, lazy-loaded blocks): same rules as on load ----------
+  // New <script type="text/plain" data-category> run if their category is accepted; new
+  // <iframe data-src data-category> load or get a placeholder. Our own nodes are skipped:
+  // script clones (data-fb-clone), placeholders (data-fb-ph) and the banner host (#frostbanner,
+  // whose content is in a shadow root that the observer does not see).
+  var SEL = 'script[type="text/plain"][data-category],iframe[data-src][data-category]', watcher = null, queued = false;
+  function ours(n) { return n === host || n.hasAttribute('data-fb-clone') || n.hasAttribute('data-fb-ph'); }
+  function relevant(n) {
+    if (n.nodeType !== 1 || ours(n)) return false;
+    return (n.matches && n.matches(SEL)) || !!(n.querySelector && n.querySelector(SEL));
+  }
+  function watch() {
+    if (watcher || typeof MutationObserver !== 'function') return;
+    watcher = new MutationObserver(function (list) {
+      if (queued) return;
+      for (var i = 0; i < list.length; i++) {
+        for (var j = 0; j < list[i].addedNodes.length; j++) {
+          if (!relevant(list[i].addedNodes[j])) continue;
+          // One pass per batch of mutations, after the page has finished inserting its nodes.
+          queued = true;
+          Promise.resolve().then(function () {
+            queued = false;
+            if (state) unblock(state);   // before a decision, scripts stay blocked
+            embeds(state || {});          // before a decision, iframes get a placeholder
+          });
+          return;
+        }
+      }
+    });
+    watcher.observe(d.documentElement, { childList: true, subtree: true });
+  }
+
   function start() {
+    watch();
     stored = readStore();
     if (valid(stored)) {
       draft = assign({}, stored.c); apply(stored.c, 'restore'); showFab(); return;
