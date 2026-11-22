@@ -339,8 +339,19 @@
       try { location.reload(); } catch (e) {}
     }
   }
+  // Fingerprint of what the visitor was shown (language, layout, texts, category names), so a log
+  // entry can be matched to the banner version that was on screen. FNV-1a, 32 bit: not a secret.
+  function textHash(t) {
+    var parts = [lang(), layout(), t.title, t.text, t.short, t.accept, t.reject, t.prefs, t.save, t.policy];
+    each(function (k) { var c = t.c[k]; parts.push(k, c && c[0], c && c[1]); });
+    var s = JSON.stringify(parts), h = 0x811c9dc5;
+    for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    return ('0000000' + h.toString(16)).slice(-8);
+  }
   function log(rec, action) {
-    var p = { site: cfg.site, consent_id: rec.id, config_version: rec.v, choices: rec.c, action: action, ts: rec.ts, url: location.href.split(/[?#]/)[0] };
+    var t = tx();
+    var p = { site: cfg.site, consent_id: rec.id, config_version: rec.v, choices: rec.c, action: action, ts: rec.ts,
+      lang: lang(), text_hash: textHash(t), url: location.href.split(/[?#]/)[0] };
     emit('log', p);
     if (!cfg.endpoint) return;
     try {
@@ -359,8 +370,11 @@
   }
 
   // ---------- UI (Shadow DOM, no global styles) ----------
+  function reqLang() { var l = String(cfg.lang || navigator.language || 'en').slice(0, 2).toLowerCase(); return LALIAS[l] || l; }
+  // Language the banner is actually shown in: a built-in one, one with custom texts, else English.
+  function lang() { var l = reqLang(); return T[l] || (cfg.texts && typeof cfg.texts === 'object' && cfg.texts[l] && typeof cfg.texts[l] === 'object') ? l : 'en'; }
   function tx() {
-    var l = String(cfg.lang || navigator.language || 'en').slice(0, 2).toLowerCase(); l = LALIAS[l] || l;
+    var l = reqLang();
     var base = T[l] || T.en, bl = T[l] ? l : 'en';
     // Custom texts may be missing or malformed (texts: null, texts.en: "x", c: null, title: 5):
     // anything that is not an object / a string falls back to the built-in text.

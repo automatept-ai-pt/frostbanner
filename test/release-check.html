@@ -439,6 +439,22 @@ if (!FB_LOCAL) {
       !!p.sr().querySelector('.card.m') && !!p.sr().activeElement && p.sr().activeElement.tagName === 'BUTTON');
     p.done();
 
+    // ---------- 7. consent log ----------
+    group('7. Consent log');
+    async function logOf(cfgExtra) {
+      var pp = await open(cfgExtra ? { cfg: JSON.stringify(cfgExtra) } : {}), rec = null;
+      pp.W.FrostBanner.on('log', function (x) { rec = x; });
+      pp.sr().querySelector('button[data-a="reject"]').click();
+      await tick(50); pp.done(); return rec;
+    }
+    var l1 = await logOf(), l2 = await logOf(), l3 = await logOf({ texts: { en: { title: 'Another title' } } }), l4 = await logOf({ lang: 'de' });
+    check('log record has language and text fingerprint', 'lang en, text_hash 8 hex', { lang: l1 && l1.lang, text_hash: l1 && l1.text_hash },
+      l1 && l1.lang === 'en' && /^[0-9a-f]{8}$/.test(l1.text_hash));
+    check('same banner gives the same fingerprint', l1 && l1.text_hash, l2 && l2.text_hash, l1 && l2 && l1.text_hash === l2.text_hash);
+    check('changed wording gives a different fingerprint', 'differs from ' + (l1 && l1.text_hash), l3 && l3.text_hash, l1 && l3 && l1.text_hash !== l3.text_hash);
+    check('German banner: lang de, different fingerprint', 'lang de', { lang: l4 && l4.lang, text_hash: l4 && l4.text_hash },
+      l4 && l4.lang === 'de' && l4.text_hash !== l1.text_hash);
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');

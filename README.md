@@ -82,7 +82,7 @@ A link to reopen the preferences, for your footer:
 
 One first-party cookie and the same value in local storage, both named `fb_consent`: a random consent ID, the choices, the banner version and the date. With the hosted service a cached copy of the published settings is kept in local storage (`fb_cfg_<site>`).
 
-When the hosted service is used, each decision is sent to the consent log with the site ID, consent ID, choices, banner version and page address. The server stores the country and a salted hash of the IP address, never the IP itself. Details: [Privacy Policy](https://frostbanner.com/privacy/) and [DPA](https://frostbanner.com/dpa/).
+When the hosted service is used, each decision is sent to the consent log with the site ID, consent ID, choices, banner version, banner language, a short fingerprint of the banner texts that were shown (`text_hash`, so a record can be matched to the wording on screen) and page address. The server stores the country and a salted hash of the IP address, never the IP itself. Details: [Privacy Policy](https://frostbanner.com/privacy/) and [DPA](https://frostbanner.com/dpa/).
 
 ## Compliance
 
