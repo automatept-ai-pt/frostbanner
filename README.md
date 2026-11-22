@@ -44,7 +44,7 @@ Change the script type to `text/plain` and add its category. FrostBanner runs it
         src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXX" async></script>
 ```
 
-Inline scripts work the same way. After consent the blocked scripts run in page order: an inline script waits until the external scripts above it have loaded (at most 15 seconds, then it runs anyway and a warning is written to the console).
+Inline scripts work the same way. All other attributes of the tag (`async`, `nonce`, `integrity`, `crossorigin`, `referrerpolicy`, event handlers such as `onload="init()"`) are kept on the script that runs; use `data-type` to give it a type other than `text/javascript` (for example `module`). After consent the blocked scripts run in page order: an inline script waits until the external scripts above it have loaded (at most 15 seconds, then it runs anyway and a warning is written to the console).
 
 ## Block videos and maps until consent
 

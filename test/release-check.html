@@ -105,6 +105,7 @@
 <script type="text/plain" data-category="analytics">order.push('inline after x-template');</script>
 <script type="text/plain" data-category="analytics" nomodule src="lib.js?nomodule"></script>
 <script type="text/plain" data-category="analytics">order.push('inline after nomodule');</script>
+<script type="text/plain" data-category="analytics" src="lib.js?onload" data-fbtest="kept" onload="order.push('onload ran, attr=' + this.getAttribute('data-fbtest'))"></script>
 <div id="spa" class="case-only"></div>
 
 <script>
@@ -238,6 +239,9 @@ if (!FB_LOCAL) {
     check('lib.js runs before the inline script', 'order starts lib, inline lib=true', ord, ord[0] === 'lib' && ord[1] === 'inline lib=true');
     check('non-JS data-type does not stall the queue', 'contains "inline after x-template"', ord, ord.indexOf('inline after x-template') > -1);
     check('nomodule external script does not stall the queue', 'contains "inline after nomodule"', ord, ord.indexOf('inline after nomodule') > -1);
+    await waitFor(function () { return p.W.order.some(function (x) { return /^onload ran/.test(x); }); });
+    var onl = p.W.order.filter(function (x) { return /^onload ran/.test(x); });
+    check('attributes are kept on the script that runs (onload, data-*)', 'onload ran, attr=kept', onl.join('; ') || 'not run', onl[0] === 'onload ran, attr=kept');
     var libClone = p.D.querySelector('script[data-fb-clone][src="lib.js"]');
     check('external clone without async attribute has async = false', 'async = false', 'async = ' + (libClone && libClone.async), libClone && libClone.async === false);
     p.done();

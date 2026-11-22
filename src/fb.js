@@ -201,6 +201,9 @@
     if (!o.parentNode || o.isConnected === false) { o.removeAttribute('data-fb-run'); return; }
     var cat = o.getAttribute('data-category'), ext = o.hasAttribute('src');
     var s = d.createElement('script');
+    // All attributes are copied except our own, on purpose: they are written by the site owner
+    // (same trust as the script itself) and sites rely on them, e.g. onload="init()", nonce,
+    // integrity, crossorigin, referrerpolicy. Documented in the README.
     for (var j = 0; j < o.attributes.length; j++) {
       var a = o.attributes[j];
       if (!/^(type|data-category|data-fb-run)$/.test(a.name)) s.setAttribute(a.name, a.value);
