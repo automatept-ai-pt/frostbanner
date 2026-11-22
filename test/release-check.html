@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FrostBanner release check</title>
+<!--
+  Release check for dist/fb.min.js. Serve the repository root over HTTP and open this page:
+    python -m http.server 8765 --bind 127.0.0.1
+    http://localhost:8765/test/release-check.html
+  The page loads itself in iframes with ?case=… (one widget per page) and checks:
+    1. consent expiry (maxAgeDays) with an old ts in localStorage,
+    2. XSS through accent, policyUrl and category keys,
+    3. order of lib.js + an inline script that uses it,
+    4. scripts and iframes added after page load.
+  Runs only on localhost / 127.0.0.1 / *.localhost / *.test.
+  Results: the table below, document.title ("PASS n/n" / "FAIL …") and window.releaseCheck.
+  Another build: ?bundle=<url>, e.g. ?bundle=https://app.frostbanner.com/v1/fb.js (default ../dist/fb.min.js).
+-->
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  // Local only: ?bundle= and ?cfg= come from the address bar, so on a public domain this page
+  // would let anyone run their script there. Anywhere else it does nothing.
+  window.FB_LOCAL = /^(localhost|127\.0\.0\.1|\[::1\])$|\.(localhost|test)$/.test(location.hostname);
+  if (!FB_LOCAL) { window.FB_CASE = false; window.FrostBanner = { stub: true }; return; }
+  window.FB_CASE = q.has('case');
+  // Harness page: keep the widget off (fb.min.js returns early when window.FrostBanner exists).
+  if (!FB_CASE) { window.FrostBanner = { stub: true }; return; }
+
+  // Case page: fresh visitor, optionally with a stored consent record of a given age.
+  document.documentElement.className = 'case';   // hides the harness UI inside previews
+  document.cookie = 'fb_consent=;path=/;max-age=0';
+  try { localStorage.removeItem('fb_consent'); } catch (e) {}
+  if (q.has('age')) {
+    var rec = { v: 1, k: 'analytics,functional,marketing,necessary', id: 'release-check',
+      c: { necessary: true, analytics: true, marketing: false, functional: true } };
+    if (q.get('age') !== 'none') rec.ts = Date.now() - Number(q.get('age')) * 864e5;
+    localStorage.setItem('fb_consent', JSON.stringify(rec));   // localStorage only: as after the cookie expired
+  }
+  window.pwned = 0;
+  window.order = [];
+  window.fbEvents = [];
+  ['shown', 'change', 'script', 'embed'].forEach(function (n) {
+    addEventListener('frostbanner:' + n, function () { fbEvents.push(n); });
+  });
+  window.frostBannerConfig = Object.assign({ site: 'demo', lang: 'en', maxAgeDays: 180 },
+    JSON.parse(q.get('cfg') || '{}'));
+  // Loaded synchronously (as with a plain <script> tag), so the widget sees the config above.
+  var src = q.get('bundle') || '../dist/fb.min.js';
+  document.write('<script src="' + src.replace(/[<>"&]/g, encodeURIComponent) + '"><\/script>');
+})();
+</script>
+<style>
+  :root { --bg: #f6f7f9; --fg: #141a24; --mut: #5b6475; --card: #fff; --ln: #dfe3ea; --ok: #1a7f37; --bad: #c62828; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1218; --fg: #e8ecf2; --mut: #9aa4b5; --card: #171b23; --ln: #2a3140; --ok: #4ac26b; --bad: #ff6b6b; }
+  }
+  body { margin: 0; padding: 24px 16px 48px; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 28px 0 8px; }
+  .mut { color: var(--mut); }
+  #summary { margin: 16px 0; padding: 14px 16px; border-radius: 10px; font-weight: 650; font-size: 16px;
+    background: var(--card); border: 1px solid var(--ln); }
+  #summary.ok { border-color: var(--ok); color: var(--ok); }
+  #summary.bad { border-color: var(--bad); color: var(--bad); }
+  .tbl { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--ln); border-radius: 10px; }
+  th, td { text-align: left; padding: 7px 10px; border-top: 1px solid var(--ln); vertical-align: top; }
+  th { border-top: 0; font-weight: 600; }
+  td.st { font-weight: 700; white-space: nowrap; }
+  td.st.ok { color: var(--ok); } td.st.bad { color: var(--bad); }
+  td code { font-size: 12.5px; word-break: break-all; }
+  tr.grp td { background: color-mix(in srgb, var(--ln) 45%, transparent); font-weight: 650; }
+  #previews { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+  figure { margin: 0; background: var(--card); border: 1px solid var(--ln); border-radius: 10px; overflow: hidden; }
+  figure iframe { display: block; width: 100%; height: 360px; border: 0; background: #fff; }
+  figcaption { padding: 8px 12px; font-size: 13px; }
+  #hidden { position: absolute; left: -10000px; top: 0; width: 800px; }
+  #hidden iframe { width: 800px; height: 600px; }
+  .case-only { display: none; }
+  .case main { display: none; }
+  .case #spa { padding: 4px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>FrostBanner release check</h1>
+  <p class="mut">Checks <code id="bundle">../dist/fb.min.js</code>: consent expiry, XSS in config, script order, content added after load.</p>
+  <script>document.getElementById('bundle').textContent = new URLSearchParams(location.search).get('bundle') || '../dist/fb.min.js';</script>
+  <div id="summary">Running…</div>
+  <div class="tbl"><table><thead><tr><th>Status</th><th>Check</th><th>Expected</th><th>Actual</th></tr></thead><tbody id="rows"></tbody></table></div>
+  <h2>Look at these banners</h2>
+  <div id="previews"></div>
+</main>
+<div id="hidden"></div>
+
+<!-- Case pages only (on the harness page these stay inert: type text/plain and no widget).
+     Order check: lib.js + an inline script that uses it; a non-JS data-type must not stall the queue. -->
+<script type="text/plain" data-category="analytics" src="lib.js"></script>
+<script type="text/plain" data-category="analytics">order.push('inline lib=' + !!(window.fbLib && window.fbLib.ready));</script>
+<script type="text/plain" data-category="analytics" data-type="text/x-template" src="lib.js?template"></script>
+<script type="text/plain" data-category="analytics">order.push('inline after x-template');</script>
+<script type="text/plain" data-category="analytics" nomodule src="lib.js?nomodule"></script>
+<script type="text/plain" data-category="analytics">order.push('inline after nomodule');</script>
+<div id="spa" class="case-only"></div>
+
+<script>
+if (!FB_LOCAL) {
+  document.getElementById('summary').textContent = 'This page runs only on localhost / 127.0.0.1 (see the comment at the top of the file).';
+  document.title = 'Local only · FrostBanner release check';
+} else if (!FB_CASE) (function () {
+  var tick = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+  var rows = document.getElementById('rows'), results = [];
+  var EVIL_ACCENT = '#fff;}</style><img src=x onerror="window.pwned=1"><style>';
+  var EVIL_KEY = 'x" autofocus onfocus="window.pwned=2';
+  var DEFAULT_ACCENT = '#2b64d9';
+
+  function group(title) {
+    var tr = document.createElement('tr'); tr.className = 'grp';
+    tr.innerHTML = '<td colspan="4"></td>'; tr.firstChild.textContent = title; rows.appendChild(tr);
+  }
+  function check(name, expected, actual, ok) {
+    results.push({ name: name, expected: expected, actual: actual, ok: !!ok });
+    var tr = document.createElement('tr');
+    tr.innerHTML = '<td class="st ' + (ok ? 'ok' : 'bad') + '">' + (ok ? 'PASS' : 'FAIL') + '</td><td></td><td><code></code></td><td><code></code></td>';
+    tr.children[1].textContent = name;
+    tr.children[2].firstChild.textContent = expected;
+    tr.children[3].firstChild.textContent = typeof actual === 'string' ? actual : JSON.stringify(actual);
+    rows.appendChild(tr);
+  }
+  // Load this page as a case in an iframe. visible: a caption puts it in the "Look at these banners" grid.
+  function open(params, caption) {
+    return new Promise(function (resolve) {
+      var f = document.createElement('iframe');
+      var bundle = new URLSearchParams(location.search).get('bundle');
+      var qs = new URLSearchParams(Object.assign({ case: '1', t: Date.now() + Math.random() }, bundle ? { bundle: bundle } : {}, params));
+      f.src = location.pathname + '?' + qs;
+      if (caption) {
+        var fig = document.createElement('figure'), cap = document.createElement('figcaption');
+        cap.textContent = caption; fig.appendChild(f); fig.appendChild(cap);
+        document.getElementById('previews').appendChild(fig);
+      } else document.getElementById('hidden').appendChild(f);
+      f.onload = function () {
+        tick(200).then(function () {
+          var W = f.contentWindow, D = W.document;
+          resolve({ f: f, W: W, D: D, keep: !!caption,
+            sr: function () { var h = D.getElementById('frostbanner'); return h && h.shadowRoot; },
+            card: function () { var s = this.sr(); return s && s.querySelector('.card'); },
+            done: function () { if (!caption) f.remove(); } });
+        });
+      };
+    });
+  }
+  function acceptAnalyticsOnly(p) {
+    p.W.FrostBanner.open();
+    var sr = p.sr();
+    sr.querySelector('input[data-c="analytics"]').click();
+    sr.querySelector('button[data-a="save"]').click();
+  }
+  function waitFor(fn, ms) {
+    var end = Date.now() + (ms || 3000);
+    return new Promise(function (resolve) {
+      (function loop() { if (fn() || Date.now() > end) resolve(); else setTimeout(loop, 50); })();
+    });
+  }
+
+  async function run() {
+    var p, v;
+
+    // ---------- 1. consent expiry ----------
+    group('1. Consent expiry (maxAgeDays = 180, record in localStorage only)');
+    for (const age of [10, 179]) {
+      p = await open({ age: age });
+      v = p.W.FrostBanner.getConsent();
+      check('Record ' + age + ' days old is restored', 'restored, no banner', { consent: v && v.analytics === true, banner: !!p.card() },
+        v && v.analytics === true && !p.card());
+      p.done();
+    }
+    p = await open({ age: 200 }, '1. Expired consent (200 days): the banner must be shown again');
+    check('Record 200 days old is rejected', 'banner shown, getConsent() = null', { consent: p.W.FrostBanner.getConsent(), banner: !!p.card() },
+      p.W.FrostBanner.getConsent() === null && !!p.card());
+    p = await open({ age: 'none' });
+    check('Record without ts is rejected', 'banner shown', { banner: !!p.card() }, !!p.card());
+    p.done();
+    p = await open({ age: -30 });
+    check('Record with ts 30 days in the future is rejected', 'banner shown', { banner: !!p.card() }, !!p.card());
+    p.done();
+
+    // ---------- 2. XSS ----------
+    group('2. XSS through config values');
+    p = await open({ cfg: JSON.stringify({ accent: EVIL_ACCENT }) }, '2. Malicious accent: default blue buttons, no broken image');
+    var acc = getComputedStyle(p.sr().querySelector('.w')).getPropertyValue('--a').trim();
+    check('accent with </style><img onerror> is ignored', 'no JS, no <img>, accent ' + DEFAULT_ACCENT,
+      { pwned: p.W.pwned, imgs: p.sr().querySelectorAll('img').length, accent: acc },
+      p.W.pwned === 0 && p.sr().querySelectorAll('img').length === 0 && acc === DEFAULT_ACCENT);
+    p = await open({ cfg: JSON.stringify({ accent: '#e0a33a' }) });
+    acc = getComputedStyle(p.sr().querySelector('.w')).getPropertyValue('--a').trim();
+    check('valid accent #e0a33a is applied', '#e0a33a', acc, acc === '#e0a33a');
+    p.done();
+
+    var urls = [
+      ['javascript:window.pwned=3', '#'], ['java\tscript:window.pwned=3', '#'], ['  JavaScript:window.pwned=3', '#'],
+      ['\u0001javascript:window.pwned=3', '#'], ['data:text/html,<script>parent.pwned=4<\/script>', '#'], ['vbscript:x', '#'],
+      ['https://example.com/privacy', 'https://example.com/privacy'], ['/privacy', '/privacy'], ['privacy.html', 'privacy.html'],
+      ['#cookies', '#cookies'], ['//example.com/p', '//example.com/p'],
+      // Unicode spaces are not stripped by the browser: the link must stay a harmless relative path.
+      ['\u00a0javascript:window.pwned=3', null], ['\ufeffjavascript:window.pwned=3', null]
+    ];
+    for (const u of urls) {
+      p = await open({ cfg: JSON.stringify({ policyUrl: u[0] }) });
+      var a = p.sr().querySelector('#fbd a'), href = a && a.getAttribute('href');
+      if (u[1] === null) {
+        check('policyUrl ' + JSON.stringify(u[0]), 'not javascript:, resolves to http(s)', 'href = ' + JSON.stringify(href) + ', protocol ' + (a && a.protocol),
+          a && /^https?:$/.test(a.protocol) && !/^javascript:/i.test(href) && p.W.pwned === 0);
+      } else check('policyUrl ' + JSON.stringify(u[0]), 'href = ' + u[1], 'href = ' + href, href === u[1] && p.W.pwned === 0);
+      p.done();
+    }
+
+    var c = { necessary: ['Necessary', 'n'], analytics: ['Analytics', 'a'] };
+    c[EVIL_KEY] = ['Evil', 'e']; c['Bad-Key'] = ['Bad', 'b'];
+    p = await open({ cfg: JSON.stringify({ categories: ['necessary', 'analytics', EVIL_KEY, 'Bad-Key', 42], texts: { en: { c: c } } }) });
+    p.W.FrostBanner.open(); await tick(100);
+    var sw = Array.prototype.map.call(p.sr().querySelectorAll('[data-c]'), function (x) { return x.getAttribute('data-c'); });
+    var injected = p.sr().querySelectorAll('[onfocus],[autofocus]').length;
+    check('category keys outside ^[a-z_]+$ are dropped', 'switches necessary,analytics; no injected attributes',
+      { switches: sw, injected: injected, pwned: p.W.pwned }, sw.join(',') === 'necessary,analytics' && injected === 0 && p.W.pwned === 0);
+    p.done();
+
+    // ---------- 3. script order ----------
+    group('3. Script order after consent (lib.js + inline script that uses it)');
+    p = await open({});
+    acceptAnalyticsOnly(p);
+    await waitFor(function () { return p.W.order.length >= 4; });
+    var ord = p.W.order.slice();
+    check('lib.js runs before the inline script', 'order starts lib, inline lib=true', ord, ord[0] === 'lib' && ord[1] === 'inline lib=true');
+    check('non-JS data-type does not stall the queue', 'contains "inline after x-template"', ord, ord.indexOf('inline after x-template') > -1);
+    check('nomodule external script does not stall the queue', 'contains "inline after nomodule"', ord, ord.indexOf('inline after nomodule') > -1);
+    var libClone = p.D.querySelector('script[data-fb-clone][src="lib.js"]');
+    check('external clone without async attribute has async = false', 'async = false', 'async = ' + (libClone && libClone.async), libClone && libClone.async === false);
+    p.done();
+
+    // ---------- 4. content added after load ----------
+    group('4. Scripts and iframes added after page load');
+    p = await open({}, '4. Marketing iframe added after load: placeholder with "Allow and show"');
+    var D = p.D, spa = D.getElementById('spa');
+    spa.className = '';
+    var blocked = function (cat, code) { var s = D.createElement('script'); s.type = 'text/plain'; s.setAttribute('data-category', cat); s.text = code; return s; };
+    // Local frame only: the check makes no requests to third parties.
+    var frame = function (cat, id, src) { var i = D.createElement('iframe'); i.id = id; i.width = 300; i.height = 140; i.setAttribute('data-category', cat);
+      i.setAttribute('data-src', src || 'frame.html#' + id); return i; };
+    var fstate = function (id) { var i = D.getElementById(id), ph = i.previousElementSibling;
+      return (i.getAttribute('src') ? 'loaded' : 'no-src') + (ph && ph.hasAttribute('data-fb-ph') ? '+placeholder' : ''); };
+
+    spa.appendChild(frame('marketing', 'mk1'));
+    spa.appendChild(blocked('analytics', "order.push('dyn before decision')"));
+    await tick(150);
+    check('iframe added before a decision gets a placeholder', 'no-src+placeholder', fstate('mk1'), fstate('mk1') === 'no-src+placeholder');
+    check('script added before a decision does not run', 'not run', p.W.order.indexOf('dyn before decision') > -1 ? 'ran' : 'not run', p.W.order.indexOf('dyn before decision') === -1);
+
+    acceptAnalyticsOnly(p);
+    await waitFor(function () { return p.W.order.indexOf('dyn before decision') > -1; });
+    check('that script runs once analytics is accepted', 'ran', p.W.order.indexOf('dyn before decision') > -1 ? 'ran' : 'not run', p.W.order.indexOf('dyn before decision') > -1);
+
+    spa.appendChild(blocked('analytics', "order.push('dyn analytics')"));
+    spa.appendChild(blocked('marketing', "order.push('dyn MARKETING')"));
+    spa.appendChild(frame('analytics', 'an1'));
+    var sec = D.createElement('section');
+    sec.appendChild(blocked('analytics', "order.push('dyn nested')"));
+    sec.appendChild(frame('marketing', 'mk2'));
+    spa.appendChild(sec);
+    await tick(300);
+    var o = p.W.order;
+    check('new analytics script runs', 'ran', o.indexOf('dyn analytics') > -1 ? 'ran' : 'not run', o.indexOf('dyn analytics') > -1);
+    check('new marketing script does not run (not accepted)', 'not run', o.indexOf('dyn MARKETING') > -1 ? 'ran' : 'not run', o.indexOf('dyn MARKETING') === -1);
+    check('script inside an added <section> runs', 'ran', o.indexOf('dyn nested') > -1 ? 'ran' : 'not run', o.indexOf('dyn nested') > -1);
+    check('new analytics iframe loads', 'loaded', fstate('an1'), fstate('an1') === 'loaded');
+    check('new marketing iframe gets a placeholder', 'no-src+placeholder', fstate('mk2'), fstate('mk2') === 'no-src+placeholder');
+
+    // javascript: in data-src is never loaded, even with consent
+    spa.appendChild(frame('analytics', 'anjs', 'javascript:parent.pwned=5'));
+    await tick(300);
+    var anjs = D.getElementById('anjs');
+    check('iframe with data-src javascript: is not loaded', 'no src, no JS', { src: anjs.getAttribute('src'), pwned: p.W.pwned },
+      !anjs.hasAttribute('src') && p.W.pwned === 0);
+
+    await tick(300);
+    var runs = D.querySelectorAll('script[data-fb-run]').length, clones = D.querySelectorAll('script[data-fb-clone]').length;
+    check('own nodes are not re-processed (one clone per script)', 'clones = originals run = script events',
+      { originals: runs, clones: clones, events: p.W.fbEvents.filter(function (e) { return e === 'script'; }).length },
+      runs === clones && clones === p.W.fbEvents.filter(function (e) { return e === 'script'; }).length);
+
+    // Moving an iframe (SPA re-render): one placeholder that follows it; after "Allow and show"
+    // the iframe loads and is visible. Separate page, so the preview above keeps its placeholder.
+    p = await open({});
+    D = p.D; spa = D.getElementById('spa'); spa.className = '';
+    acceptAnalyticsOnly(p);
+    await tick(150);
+    spa.appendChild(frame('marketing', 'mv'));
+    await tick(200);
+    var mv = D.getElementById('mv'), box = D.createElement('div');
+    spa.appendChild(D.createElement('hr'));
+    spa.appendChild(box); box.appendChild(mv);
+    await tick(300);
+    var next = Array.prototype.filter.call(D.querySelectorAll('[data-fb-ph]'), function (x) { return x.nextElementSibling === mv; });
+    check('moved iframe keeps one placeholder next to it', '1 placeholder, right before the iframe',
+      { nextToIframe: next.length, total: D.querySelectorAll('[data-fb-ph]').length }, next.length === 1 && D.querySelectorAll('[data-fb-ph]').length === 1);
+    if (next[0]) next[0].querySelector('button').click();
+    await tick(300);
+    check('after "Allow and show" the moved iframe loads and is visible', 'loaded, display not none, 0 placeholders',
+      { state: mv.getAttribute('src') ? 'loaded' : 'no-src', display: mv.style.display, placeholders: D.querySelectorAll('[data-fb-ph]').length },
+      !!mv.getAttribute('src') && mv.style.display !== 'none' && D.querySelectorAll('[data-fb-ph]').length === 0);
+    p.done();
+
+    // ---------- summary ----------
+    var failed = results.filter(function (r) { return !r.ok; });
+    var s = document.getElementById('summary');
+    s.className = failed.length ? 'bad' : 'ok';
+    s.textContent = (failed.length ? 'FAIL ' : 'PASS ') + (results.length - failed.length) + '/' + results.length +
+      (failed.length ? ' — failed: ' + failed.map(function (r) { return r.name; }).join('; ') : ' — all checks passed');
+    document.title = (failed.length ? 'FAIL ' : 'PASS ') + (results.length - failed.length) + '/' + results.length + ' · FrostBanner release check';
+    window.releaseCheck = { passed: results.length - failed.length, total: results.length, results: results };
+    console.log('FrostBanner release check:', window.releaseCheck);
+  }
+  run().catch(function (e) {
+    var s = document.getElementById('summary'); s.className = 'bad'; s.textContent = 'ERROR: ' + (e && e.stack || e);
+    document.title = 'ERROR · FrostBanner release check';
+    window.releaseCheck = { error: String(e && e.stack || e) };
+  });
+})();
+</script>
+</body>
+</html>
