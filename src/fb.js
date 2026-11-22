@@ -97,7 +97,24 @@
   function uid() {
     try { return crypto.randomUUID(); } catch (e) { return 'fb-' + Math.random().toString(36).slice(2) + Date.now().toString(36); }
   }
-  function each(fn) { cfg.categories.forEach(fn); }
+  // ---------- config values that reach HTML/CSS are validated (defence in depth against a bad config) ----------
+  // Accent goes into a <style> block: only #rgb … #rrggbbaa is accepted.
+  function accent() { return /^#[0-9a-fA-F]{3,8}$/.test(cfg.accent || '') ? cfg.accent : DEF.accent; }
+  // Category keys go into attributes and the consent record: lower-case letters and "_" only.
+  function cats() {
+    return (Array.isArray(cfg.categories) ? cfg.categories : DEF.categories)
+      .filter(function (k) { return typeof k === 'string' && /^[a-z_]+$/.test(k); });
+  }
+  // Policy link: http(s), relative paths and #anchors only (no javascript:, data:, …).
+  // Browsers ignore tabs, newlines and leading control characters in a URL, so the scheme is
+  // checked with them removed ("java\tscript:" must not slip through).
+  function safeUrl(u) {
+    if (typeof u !== 'string' || !u) return '#';
+    var s = u.replace(/[\u0000- \u007f]/g, '');
+    var scheme = s.match(/^([a-zA-Z][a-zA-Z0-9+.\-]*):/);
+    return !scheme || /^https?$/i.test(scheme[1]) ? u.trim() : '#';
+  }
+  function each(fn) { cats().forEach(fn); }
   function pick(fn) { var o = {}; each(function (k) { o[k] = k === 'necessary' ? true : !!fn(k); }); return o; }
   // Default long text names only the categories actually in use (e.g. no "personalise ads" if Marketing is off).
   function defText(l) {
@@ -184,7 +201,7 @@
       if (has) continue;
       var t = tx(), name = t.c && t.c[cat] ? t.c[cat][0] : cat;
       if (/\s\{cat\}[\s.]/.test(t.embed)) name = name.toLowerCase(); // lower-case only inside a sentence (en, pt); quoted names keep their case
-      var acc = /^#[0-9a-fA-F]{3,8}$/.test(cfg.accent || '') ? cfg.accent : '#2b64d9';
+      var acc = accent();
       var p = d.createElement('div');
       p.setAttribute('data-fb-ph', ''); p.setAttribute('role', 'note');
       p.style.cssText = 'box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;' +
@@ -229,7 +246,7 @@
   // ---------- decisions ----------
   function apply(c, source) { state = c; gcm('update', c); purge(c); unblock(c); embeds(c); emit('change', { choices: c, source: source }); }
   // Ask again only when the set of categories changes, not on every text/colour edit.
-  function catKey() { return cfg.categories.slice().sort().join(','); }
+  function catKey() { return cats().sort().join(','); }
   function decide(c, action) {
     stored = { v: cfg.version, k: catKey(), id: (stored && stored.id) || uid(), ts: Date.now(), c: c };
     writeStore(stored);
@@ -264,7 +281,7 @@
   }
   function css() {
     return ':host{all:initial}' +
-      '.w{--a:' + cfg.accent + ';--r:' + (+cfg.radius) + 'px;--b:' + (+cfg.blur) + 'px;font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--fg);-webkit-font-smoothing:antialiased}' +
+      '.w{--a:' + accent() + ';--r:' + (+cfg.radius) + 'px;--b:' + (+cfg.blur) + 'px;font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--fg);-webkit-font-smoothing:antialiased}' +
       '.light{--fg:#141a24;--mut:#465062;--bg:rgba(255,255,255,.56);--ln:rgba(255,255,255,.72);--sw:rgba(20,26,36,.14);--sh:0 20px 50px -12px rgba(16,28,56,.35)}' +
       '.dark{--fg:#eef2f8;--mut:#b3bccb;--bg:rgba(18,22,30,.5);--ln:rgba(255,255,255,.16);--sw:rgba(255,255,255,.18);--sh:0 20px 50px -12px rgba(0,0,0,.6)}' +
       '.tint{--fg:#10261f;--mut:#3b574e;--bg:color-mix(in srgb,var(--a) 16%,rgba(255,255,255,.62));--ln:rgba(255,255,255,.8);--sw:rgba(16,38,31,.14);--sh:0 20px 50px -14px color-mix(in srgb,var(--a) 45%,transparent)}' +
@@ -362,7 +379,7 @@
     mount(); mode = 'banner'; view = v;
     var t = tx(), lay = /^(corner|bar|center|pill|chat|split)$/.test(cfg.layout) ? cfg.layout : 'corner';
     var h = '<div class="card in ' + (v === 'main' ? 'm' : 'p') + '" role="dialog" aria-modal="' + (lay === 'center') + '" aria-labelledby="fbt" aria-describedby="fbd">';
-    var pol = ' <a href="' + esc(cfg.policyUrl) + '" target="_blank" rel="noopener">' + esc(t.policy) + '</a>';
+    var pol = ' <a href="' + esc(safeUrl(cfg.policyUrl)) + '" target="_blank" rel="noopener">' + esc(t.policy) + '</a>';
     var typing = false;
     // On sites that use the WordPress.org plugin the credit stays plain text:
     // the plugin directory does not allow credit links without the owner's opt-in.
