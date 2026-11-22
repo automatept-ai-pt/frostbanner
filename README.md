@@ -114,8 +114,11 @@ Found a vulnerability? Please email support@frostbanner.com instead of opening a
 ## Build
 
 ```bash
-npx terser src/fb.js -c -m --comments '/^!/' -o dist/fb.min.js
+npm install        # once: installs the pinned terser version
+npm run build      # src/fb.js -> dist/fb.min.js
 ```
+
+Release check: serve the repository root (`python -m http.server 8765 --bind 127.0.0.1`) and open `http://localhost:8765/test/release-check.html`; every row must say PASS.
 
 ## License
 

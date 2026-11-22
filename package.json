@@ -1,0 +1,17 @@
+{
+  "name": "frostbanner-widget",
+  "version": "0.4.2",
+  "description": "FrostBanner cookie consent banner widget",
+  "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/automatept-ai-pt/frostbanner.git"
+  },
+  "scripts": {
+    "build": "terser src/fb.js -c -m --comments \"/^!/\" -o dist/fb.min.js"
+  },
+  "devDependencies": {
+    "terser": "5.31.6"
+  }
+}

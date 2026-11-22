@@ -518,6 +518,20 @@ if (!FB_LOCAL) {
     }
     check('every language renders a complete banner and preferences', 'no problems', badLangs.length ? badLangs : 'all ' + langs.length + ' ok', langs.length === 29 && badLangs.length === 0);
 
+    // ---------- 11. build and version ----------
+    group('11. Build and version');
+    p = await open({});
+    var apiVer = p.W.FrostBanner.version;
+    p.done();
+    var bundleUrl = new URLSearchParams(location.search).get('bundle') || '../dist/fb.min.js';
+    var head = await fetch(bundleUrl, { cache: 'no-store' }).then(function (r) { return r.text(); }).then(function (s) { return s.slice(0, 120); }).catch(function () { return ''; });
+    var hv = (head.match(/FrostBanner v(\d+\.\d+\.\d+)/) || [])[1];
+    check('bundle header version = FrostBanner.version', apiVer, 'header ' + hv + ', API ' + apiVer, !!apiVer && hv === apiVer);
+    var pkg = await fetch('../package.json', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
+    check('package.json version = FrostBanner.version, build script present', apiVer + ', npm run build',
+      pkg ? { version: pkg.version, build: pkg.scripts && pkg.scripts.build } : 'no package.json',
+      !!pkg && pkg.version === apiVer && /terser src\/fb\.js/.test(pkg.scripts && pkg.scripts.build || ''));
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');
