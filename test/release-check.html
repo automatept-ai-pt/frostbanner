@@ -30,9 +30,14 @@
 
   // Case page: fresh visitor, optionally with a stored consent record of a given age.
   document.documentElement.className = 'case';   // hides the harness UI inside previews
-  document.cookie = 'fb_consent=;path=/;max-age=0';
-  try { localStorage.removeItem('fb_consent'); } catch (e) {}
-  if (q.has('age')) {
+  // A reload (consent withdrawal test) keeps the stored choice: only a fresh load starts clean.
+  var nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+  var reloaded = nav && nav.type === 'reload';
+  if (!reloaded) {
+    document.cookie = 'fb_consent=;path=/;max-age=0';
+    try { localStorage.removeItem('fb_consent'); } catch (e) {}
+  }
+  if (q.has('age') && !reloaded) {
     var rec = { v: 1, k: 'analytics,functional,marketing,necessary', id: 'release-check',
       c: { necessary: true, analytics: true, marketing: false, functional: true } };
     if (q.get('age') !== 'none') rec.ts = Date.now() - Number(q.get('age')) * 864e5;
@@ -376,6 +381,33 @@ if (!FB_LOCAL) {
     var inSpa = p.D.getElementById('frostbanner');
     check('valid container "#spa": banner rendered inside it', 'host inside #spa', inSpa && inSpa.parentElement.id, !!inSpa && inSpa.parentElement.id === 'spa');
     p.done();
+
+    // withdrawal: a category whose scripts already ran -> page reload (unless reloadOnWithdraw: false)
+    async function withdrawAnalytics(cfgExtra) {
+      var pp = await open(cfgExtra ? { cfg: JSON.stringify(cfgExtra) } : {});
+      acceptAnalyticsOnly(pp);
+      await waitFor(function () { return pp.W.order.indexOf('lib') > -1; });
+      pp.W.__beforeWithdraw = true;
+      var reloadEvt = false;
+      pp.W.addEventListener('frostbanner:reload', function () { reloadEvt = true; });
+      pp.W.FrostBanner.open();
+      pp.sr().querySelector('input[data-c="analytics"]').click();   // switch analytics off
+      pp.sr().querySelector('button[data-a="save"]').click();
+      await tick(800);
+      var W2 = pp.f.contentWindow, c2 = W2.FrostBanner.getConsent();
+      return { pp: pp, reloaded: !W2.__beforeWithdraw, reloadEvt: reloadEvt, analytics: c2 && c2.analytics,
+        banner: !!(W2.document.getElementById('frostbanner') && W2.document.getElementById('frostbanner').shadowRoot.querySelector('.card')),
+        ranAfter: W2.order ? W2.order.indexOf('lib') > -1 : null };
+    }
+    var wd = await withdrawAnalytics();
+    check('withdrawing analytics after its scripts ran reloads the page', 'reloaded, analytics off, no banner, scripts not run again',
+      { reloaded: wd.reloaded, event: wd.reloadEvt, analytics: wd.analytics, banner: wd.banner, ranAfter: wd.ranAfter },
+      wd.reloaded && wd.reloadEvt && wd.analytics === false && !wd.banner && wd.ranAfter === false);
+    wd.pp.done();
+    wd = await withdrawAnalytics({ reloadOnWithdraw: false });
+    check('reloadOnWithdraw: false keeps the page', 'not reloaded, analytics off', { reloaded: wd.reloaded, analytics: wd.analytics },
+      !wd.reloaded && wd.analytics === false);
+    wd.pp.done();
 
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });

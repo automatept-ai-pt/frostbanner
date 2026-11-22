@@ -46,6 +46,8 @@ Change the script type to `text/plain` and add its category. FrostBanner runs it
 
 Inline scripts work the same way. All other attributes of the tag (`async`, `nonce`, `integrity`, `crossorigin`, `referrerpolicy`, event handlers such as `onload="init()"`) are kept on the script that runs; use `data-type` to give it a type other than `text/javascript` (for example `module`). After consent the blocked scripts run in page order: an inline script waits until the external scripts above it have loaded (at most 15 seconds, then it runs anyway and a warning is written to the console).
 
+A script that has run cannot be unloaded. If the visitor later withdraws a category whose scripts already ran on the page, FrostBanner reloads the page so they stop (event `reload` just before). Set `reloadOnWithdraw: false` to turn this off.
+
 ## Block videos and maps until consent
 
 Rename `src` to `data-src` and add the category:
@@ -68,7 +70,7 @@ FrostBanner.on('change', function (e) { console.log(e.choices, e.source); });
 FrostBanner.reset();         // forget the choice (testing)
 ```
 
-Events: `change`, `consentmode`, `script`, `embed`, `log`, `shown`, `skip`. They are also dispatched on `window` as `frostbanner:<name>`.
+Events: `change`, `consentmode`, `script`, `embed`, `log`, `shown`, `skip`, `reload`. They are also dispatched on `window` as `frostbanner:<name>`.
 
 A link to reopen the preferences, for your footer:
 

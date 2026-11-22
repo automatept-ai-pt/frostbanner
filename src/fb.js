@@ -55,6 +55,7 @@
     categories: ['necessary', 'analytics', 'marketing', 'functional'],
     policyUrl: '#', geo: { mode: 'all', country: null }, // mode: all | eu
     endpoint: null, maxAgeDays: 180, branding: true,
+    reloadOnWithdraw: true,      // reload the page when a category whose scripts already ran is withdrawn
     container: null,             // selector: render inside an element (editor preview)
     texts: {}
   };
@@ -173,7 +174,7 @@
   //   their order among themselves (a script created from JS is async by default);
   // - an inline script waits until every earlier non-async external script has loaded (or failed),
   //   so `<script src="lib.js">` + an inline script that uses lib.js work after consent.
-  var runQ = [], waiting = 0, runGen = 0;
+  var runQ = [], waiting = 0, runGen = 0, ran = {};   // ran: categories whose scripts ran on this page
   function unblock(c) {
     var n = d.querySelectorAll('script[type="text/plain"][data-category]');
     for (var i = 0; i < n.length; i++) {
@@ -230,6 +231,7 @@
     }
     if (!ext) s.text = o.text;
     o.parentNode.insertBefore(s, o.nextSibling);
+    ran[cat] = true;
     emit('script', { category: cat, name: o.getAttribute('data-name') || o.src || 'inline script' });
   }
 
@@ -319,11 +321,18 @@
   // Ask again only when the set of categories changes, not on every text/colour edit.
   function catKey() { return cats().sort().join(','); }
   function decide(c, action) {
+    // Scripts that already ran cannot be unloaded: if the visitor withdraws a category whose
+    // scripts ran on this page, the page is reloaded so they stop (reloadOnWithdraw: false to opt out).
+    var gone = Object.keys(ran).filter(function (k) { return !c[k]; });
     stored = { v: cfg.version, k: catKey(), id: (stored && stored.id) || uid(), ts: Date.now(), c: c };
     writeStore(stored);
     apply(c, action);
-    log(stored, action);
+    log(stored, action);   // sendBeacon survives the reload
     showFab();
+    if (gone.length && cfg.reloadOnWithdraw !== false && !cfg.container) {
+      emit('reload', { categories: gone });
+      try { location.reload(); } catch (e) {}
+    }
   }
   function log(rec, action) {
     var p = { site: cfg.site, consent_id: rec.id, config_version: rec.v, choices: rec.c, action: action, ts: rec.ts, url: location.href.split(/[?#]/)[0] };
@@ -638,7 +647,7 @@
     // scripts that already ran cannot be unloaded.
     reset: function () {
       clearStore(); stored = null; state = null;
-      runQ = []; waiting = 0; runGen++;
+      runQ = []; waiting = 0; runGen++; ran = {};
       d.querySelectorAll('script[data-fb-clone]').forEach(function (s) { s.remove(); });
       d.querySelectorAll('script[data-fb-run]').forEach(function (s) { s.removeAttribute('data-fb-run'); });
       gcm('update', {});
