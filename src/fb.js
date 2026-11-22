@@ -159,23 +159,50 @@
   }
 
   // ---------- script blocking: <script type="text/plain" data-category="analytics"> ----------
+  // Scripts run in document order, as they would have without blocking:
+  // - an external script without "async" is inserted with async = false, so external scripts keep
+  //   their order among themselves (a script created from JS is async by default);
+  // - an inline script waits until every earlier non-async external script has loaded (or failed),
+  //   so `<script src="lib.js">` + an inline script that uses lib.js work after consent.
+  var runQ = [], waiting = 0, runGen = 0;
   function unblock(c) {
     var n = d.querySelectorAll('script[type="text/plain"][data-category]');
     for (var i = 0; i < n.length; i++) {
-      var o = n[i], cat = o.getAttribute('data-category');
-      if (!c[cat] || o.hasAttribute('data-fb-run')) continue;
+      var o = n[i];
+      if (!c[o.getAttribute('data-category')] || o.hasAttribute('data-fb-run')) continue;
       o.setAttribute('data-fb-run', '');
-      var s = d.createElement('script');
-      for (var j = 0; j < o.attributes.length; j++) {
-        var a = o.attributes[j];
-        if (!/^(type|data-category|data-fb-run)$/.test(a.name)) s.setAttribute(a.name, a.value);
-      }
-      s.type = o.getAttribute('data-type') || 'text/javascript';
-      s.setAttribute('data-fb-clone', '');
-      if (!o.src) s.text = o.text;
-      o.parentNode.insertBefore(s, o.nextSibling);
-      emit('script', { category: cat, name: o.getAttribute('data-name') || o.src || 'inline script' });
+      runQ.push(o);
     }
+    pump();
+  }
+  function pump() {
+    while (runQ.length) {
+      if (!runQ[0].hasAttribute('src') && waiting) return;   // inline: wait for the external scripts before it
+      runScript(runQ.shift());
+    }
+  }
+  function runScript(o) {
+    var cat = o.getAttribute('data-category'), ext = o.hasAttribute('src');
+    var s = d.createElement('script');
+    for (var j = 0; j < o.attributes.length; j++) {
+      var a = o.attributes[j];
+      if (!/^(type|data-category|data-fb-run)$/.test(a.name)) s.setAttribute(a.name, a.value);
+    }
+    s.type = o.getAttribute('data-type') || 'text/javascript';
+    s.setAttribute('data-fb-clone', '');
+    if (ext && !o.hasAttribute('async')) {
+      s.async = false;
+      waiting++;
+      var gen = runGen, done = function () {
+        if (done.ran || gen !== runGen) return;   // once per script; ignored after reset()
+        done.ran = true; waiting--; pump();
+      };
+      s.addEventListener('load', done);
+      s.addEventListener('error', done);
+    }
+    if (!ext) s.text = o.text;
+    o.parentNode.insertBefore(s, o.nextSibling);
+    emit('script', { category: cat, name: o.getAttribute('data-name') || o.src || 'inline script' });
   }
 
   // ---------- embeds: <iframe data-src="https://www.youtube.com/embed/..." data-category="marketing"> ----------
@@ -512,6 +539,7 @@
     // scripts that already ran cannot be unloaded.
     reset: function () {
       clearStore(); stored = null; state = null;
+      runQ = []; waiting = 0; runGen++;
       d.querySelectorAll('script[data-fb-clone]').forEach(function (s) { s.remove(); });
       d.querySelectorAll('script[data-fb-run]').forEach(function (s) { s.removeAttribute('data-fb-run'); });
       gcm('update', {});
