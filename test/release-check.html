@@ -494,6 +494,30 @@ if (!FB_LOCAL) {
     check('invalid consentVersion counts as 1', 'restored', { consent: !!p.W.FrostBanner.getConsent() }, !!p.W.FrostBanner.getConsent());
     p.done();
 
+    // ---------- 10. translations ----------
+    group('10. Translations');
+    p = await open({});
+    var langs = p.W.FrostBanner.languages || [];
+    p.done();
+    check('29 built-in languages', '29', langs.length + ': ' + langs.join(' '), langs.length === 29);
+    var enTitle = null, badLangs = [];
+    for (const lg2 of langs) {
+      p = await open({ cfg: JSON.stringify({ lang: lg2 }) });
+      var card = p.card(), txt = card ? card.textContent : '';
+      var title = card && card.querySelector('#fbt') ? card.querySelector('#fbt').textContent : '';
+      p.W.FrostBanner.open();
+      var sw2 = p.sr().querySelectorAll('[data-c]').length, ptxt = p.sr().querySelector('.card').textContent;
+      if (lg2 === 'en') enTitle = title;
+      var probs = [];
+      if (!title) probs.push('no title');
+      if (/undefined|null|\[object/.test(txt + ptxt)) probs.push('undefined text');
+      if (sw2 !== 4) probs.push(sw2 + ' switches');
+      if (lg2 !== 'en' && enTitle && title === enTitle) probs.push('English title');
+      if (probs.length) badLangs.push(lg2 + ': ' + probs.join(', '));
+      p.done();
+    }
+    check('every language renders a complete banner and preferences', 'no problems', badLangs.length ? badLangs : 'all ' + langs.length + ' ok', langs.length === 29 && badLangs.length === 0);
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');
