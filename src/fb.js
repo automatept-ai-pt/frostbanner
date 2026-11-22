@@ -424,6 +424,9 @@
   }
   function valid(s) {
     if (!s || !s.c) return false;
+    // The cookie expires after maxAgeDays, but the localStorage copy never does:
+    // check the age of the record itself (ts is Date.now(), in milliseconds).
+    if (typeof s.ts !== 'number' || Date.now() - s.ts > (+cfg.maxAgeDays || DEF.maxAgeDays) * 864e5) return false;
     return s.k ? s.k === catKey() : s.v === cfg.version;   // records before v0.3 have no k
   }
   function start() {
