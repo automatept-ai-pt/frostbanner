@@ -358,6 +358,21 @@ if (!FB_LOCAL) {
       p.done();
     }
 
+    // container: invalid selector or missing element -> banner on the page, no exception
+    for (const sel of ['###', '#does-not-exist']) {
+      p = await open({ cfg: JSON.stringify({ container: sel }) });
+      var hostEl = p.D.getElementById('frostbanner');
+      var fixedPos = p.card() ? getComputedStyle(p.card().parentElement).position : null;
+      check('container ' + JSON.stringify(sel) + ': banner shown on the page', 'banner in <body>, position fixed',
+        { banner: !!p.card(), parent: hostEl && hostEl.parentElement.tagName, position: fixedPos },
+        !!p.card() && hostEl.parentElement === p.D.body && fixedPos === 'fixed');
+      p.done();
+    }
+    p = await open({ cfg: JSON.stringify({ container: '#spa' }) });
+    var inSpa = p.D.getElementById('frostbanner');
+    check('valid container "#spa": banner rendered inside it', 'host inside #spa', inSpa && inSpa.parentElement.id, !!inSpa && inSpa.parentElement.id === 'spa');
+    p.done();
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');

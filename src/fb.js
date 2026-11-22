@@ -430,7 +430,14 @@
     host = d.createElement('div');
     host.id = 'frostbanner';
     root = host.attachShadow({ mode: 'open' });
-    (cfg.container && d.querySelector(cfg.container) || d.body).appendChild(host);
+    // An invalid selector would throw and a missing element would leave the banner positioned
+    // for a container that is not there: both fall back to the page with a warning.
+    var box = null;
+    if (cfg.container) {
+      try { box = d.querySelector(cfg.container); } catch (e) {}
+      if (!box) { warn('container "' + cfg.container + '" not found, the banner is shown on the page'); cfg.container = null; }
+    }
+    (box || d.body).appendChild(host);
     root.addEventListener('click', function (e) {
       var b = e.target.closest && e.target.closest('[data-a]');
       if (b) act(b.getAttribute('data-a'));
