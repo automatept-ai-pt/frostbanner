@@ -94,6 +94,7 @@
     (L[n] || []).forEach(function (f) { try { f(p); } catch (e) {} });
     try { w.dispatchEvent(new CustomEvent('frostbanner:' + n, { detail: p })); } catch (e) {}
   }
+  function warn(m) { try { console.warn('FrostBanner: ' + m); } catch (e) {} }
   function uid() {
     try { return crypto.randomUUID(); } catch (e) { return 'fb-' + Math.random().toString(36).slice(2) + Date.now().toString(36); }
   }
@@ -105,15 +106,19 @@
     return (Array.isArray(cfg.categories) ? cfg.categories : DEF.categories)
       .filter(function (k) { return typeof k === 'string' && /^[a-z_]+$/.test(k); });
   }
-  // Policy link: http(s), relative paths and #anchors only (no javascript:, data:, …).
-  // Browsers ignore tabs, newlines and leading control characters in a URL, so the scheme is
-  // checked with them removed ("java\tscript:" must not slip through).
-  function safeUrl(u) {
-    if (typeof u !== 'string' || !u) return '#';
-    var s = u.replace(/[\u0000- \u007f]/g, '');
-    var scheme = s.match(/^([a-zA-Z][a-zA-Z0-9+.\-]*):/);
-    return !scheme || /^https?$/i.test(scheme[1]) ? u.trim() : '#';
+  // URLs from config (policy link, iframe data-src): http(s), relative paths and #anchors only
+  // (no javascript:, data:, …). The string is normalised exactly as the browser's URL parser does
+  // (tabs/newlines removed anywhere, C0 controls and spaces trimmed at both ends: "java\tscript:",
+  // "\u0001javascript:" must not slip through), and the SAME string is checked and returned.
+  // Not String#trim(): it also strips U+00A0, U+FEFF… which the browser keeps, so
+  // "\u00a0javascript:" would pass the check as a relative path and come back as "javascript:".
+  function cleanUrl(u) {
+    if (typeof u !== 'string') return null;
+    var v = u.replace(/[\t\n\r]/g, '').replace(/^[\u0000-\u0020]+|[\u0000-\u0020]+$/g, '');
+    var scheme = v.match(/^([a-zA-Z][a-zA-Z0-9+.\-]*):/);
+    return v && (!scheme || /^https?$/i.test(scheme[1])) ? v : null;
   }
+  function safeUrl(u) { return cleanUrl(u) || '#'; }
   function each(fn) { cats().forEach(fn); }
   function pick(fn) { var o = {}; each(function (k) { o[k] = k === 'necessary' ? true : !!fn(k); }); return o; }
   // Default long text names only the categories actually in use (e.g. no "personalise ads" if Marketing is off).
@@ -188,6 +193,8 @@
       /^(text|application)\/(x-)?(java|ecma)script$/.test(t) || /^text\/(javascript1\.[0-5]|jscript|livescript)$/.test(t);
   }
   function runScript(o) {
+    // Removed from the page while waiting (SPA route change): skip it, but let it run if it comes back.
+    if (!o.parentNode || o.isConnected === false) { o.removeAttribute('data-fb-run'); return; }
     var cat = o.getAttribute('data-category'), ext = o.hasAttribute('src');
     var s = d.createElement('script');
     for (var j = 0; j < o.attributes.length; j++) {
@@ -198,13 +205,19 @@
     s.setAttribute('data-fb-clone', '');
     // Wait only for types the browser actually loads: for anything else (data-type="text/x-template",
     // "application/ld+json", …) no load/error ever fires and the queue would stall.
-    if (ext && !o.hasAttribute('async') && isJs(s.type)) {
+    // "nomodule" scripts are skipped by every browser with module support: no event fires either.
+    if (ext && !o.hasAttribute('async') && !o.hasAttribute('nomodule') && isJs(s.type)) {
       s.async = false;
       waiting++;
       var gen = runGen, done = function () {
         if (done.ran || gen !== runGen) return;   // once per script; ignored after reset()
-        done.ran = true; waiting--; pump();
+        done.ran = true; clearTimeout(tm); waiting--; pump();
       };
+      // Safety net: a script that never reports load/error must not block the queue for ever.
+      var tm = setTimeout(function () {
+        warn(o.getAttribute('src') + ' did not load within 15 s, running the next blocked scripts anyway');
+        done();
+      }, 15000);
       s.addEventListener('load', done);
       s.addEventListener('error', done);
     }
@@ -221,19 +234,26 @@
   function embeds(c) {
     var n = d.querySelectorAll('iframe[data-src][data-category]');
     for (var i = 0; i < n.length; i++) {
-      var f = n[i], cat = f.getAttribute('data-category'), ph = f.previousElementSibling;
-      var has = ph && ph.hasAttribute && ph.hasAttribute('data-fb-ph');
+      // The placeholder is linked to its iframe (not found as the previous sibling), so it survives
+      // the iframe being moved or another element being inserted between them.
+      var f = n[i], cat = f.getAttribute('data-category'), ph = f._fbPh;
+      var has = !!(ph && ph.parentNode && ph.isConnected !== false);
       if (c && c[cat]) {
-        if (f.getAttribute('src') !== f.getAttribute('data-src')) {
-          f.setAttribute('src', f.getAttribute('data-src'));
-          emit('embed', { category: cat, src: f.getAttribute('data-src') });
+        var src = cleanUrl(f.getAttribute('data-src'));          // no javascript:/data: iframes
+        if (src && f.getAttribute('src') !== src) {
+          f.setAttribute('src', src);
+          emit('embed', { category: cat, src: src });
+        } else if (!src && !f.hasAttribute('data-fb-bad')) {
+          f.setAttribute('data-fb-bad', '');                       // warn once per iframe
+          warn('iframe data-src "' + f.getAttribute('data-src') + '" is not an http(s) or relative address, not loaded');
         }
         if (f.hasAttribute('data-fb-disp')) { f.style.display = f.getAttribute('data-fb-disp'); f.removeAttribute('data-fb-disp'); }
         if (has) ph.parentNode.removeChild(ph);
+        f._fbPh = null;
         continue;
       }
       if (f.hasAttribute('src')) f.removeAttribute('src');          // consent withdrawn: unload
-      if (has) continue;
+      if (has) { if (ph.nextSibling !== f) f.parentNode.insertBefore(ph, f); continue; }   // keep it next to the iframe
       var t = tx(), name = t.c && t.c[cat] ? t.c[cat][0] : cat;
       if (/\s\{cat\}[\s.]/.test(t.embed)) name = name.toLowerCase(); // lower-case only inside a sentence (en, pt); quoted names keep their case
       var acc = accent();
@@ -254,9 +274,11 @@
         return function () { var cc = assign({}, state || pick(function () { return false; })); cc[k] = true; draft = assign({}, cc); decide(cc, 'custom'); };
       })(cat));
       p.appendChild(m); p.appendChild(b);
-      f.setAttribute('data-fb-disp', f.style.display || '');
+      // Remember the iframe's own display only once: on a second pass it is already "none".
+      if (!f.hasAttribute('data-fb-disp')) f.setAttribute('data-fb-disp', f.style.display || '');
       f.style.display = 'none';
       f.parentNode.insertBefore(p, f);
+      f._fbPh = p;
     }
   }
 
@@ -478,7 +500,9 @@
     if (!s || !s.c) return false;
     // The cookie expires after maxAgeDays, but the localStorage copy never does:
     // check the age of the record itself (ts is Date.now(), in milliseconds).
-    if (typeof s.ts !== 'number' || Date.now() - s.ts > (+cfg.maxAgeDays || DEF.maxAgeDays) * 864e5) return false;
+    // A ts more than a day in the future (visitor's clock was set ahead) would never expire: rejected too.
+    var age = typeof s.ts === 'number' ? Date.now() - s.ts : NaN;
+    if (!(age >= -864e5 && age <= (+cfg.maxAgeDays || DEF.maxAgeDays) * 864e5)) return false;
     return s.k ? s.k === catKey() : s.v === cfg.version;   // records before v0.3 have no k
   }
   // ---------- content added later (SPA routes, lazy-loaded blocks): same rules as on load ----------

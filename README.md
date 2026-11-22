@@ -44,7 +44,7 @@ Change the script type to `text/plain` and add its category. FrostBanner runs it
         src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXX" async></script>
 ```
 
-Inline scripts work the same way.
+Inline scripts work the same way. After consent the blocked scripts run in page order: an inline script waits until the external scripts above it have loaded (at most 15 seconds, then it runs anyway and a warning is written to the console).
 
 ## Block videos and maps until consent
 
@@ -55,7 +55,9 @@ Rename `src` to `data-src` and add the category:
         data-src="https://www.youtube-nocookie.com/embed/VIDEO_ID" allowfullscreen></iframe>
 ```
 
-Until the visitor accepts, a placeholder with an "Allow and show" button is shown and nothing is loaded from the third party. The category must be listed in `categories`.
+Until the visitor accepts, a placeholder with an "Allow and show" button is shown and nothing is loaded from the third party. The category must be listed in `categories`. Only `http(s)` and relative addresses are loaded.
+
+Blocked scripts and iframes added later (single-page apps, lazy-loaded blocks) are handled the same way. Because of this, a blocked `<script type="text/plain" data-category>` that ends up in the page also runs when it comes from HTML inserted by JavaScript: if your site shows user-submitted HTML, make sure your sanitizer removes `<script>` elements whatever their `type`.
 
 ## JavaScript API
 
