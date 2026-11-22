@@ -532,6 +532,10 @@ if (!FB_LOCAL) {
       pkg ? { version: pkg.version, build: pkg.scripts && pkg.scripts.build } : 'no package.json',
       !!pkg && pkg.version === apiVer && /terser src\/fb\.js/.test(pkg.scripts && pkg.scripts.build || ''));
 
+    var chlog = await fetch('../CHANGELOG.md', { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).catch(function () { return ''; });
+    var hasEntry = chlog.indexOf('## [' + apiVer + ']') > -1;
+    check('CHANGELOG.md has an entry for FrostBanner.version', '## [' + apiVer + ']', chlog ? (hasEntry ? 'found' : 'missing') : 'no CHANGELOG.md', hasEntry);
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');
