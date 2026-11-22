@@ -341,13 +341,16 @@
 
   // ---------- decisions ----------
   function apply(c, source) { state = c; gcm('update', c); purge(c); unblock(c); embeds(c); emit('change', { choices: c, source: source }); }
-  // Ask again only when the set of categories changes, not on every text/colour edit.
+  // Ask again only when the set of categories changes, not on every text/colour edit (version
+  // changes with every published edit), or when the owner raises consentVersion on purpose
+  // (e.g. after a change in the cookie policy). Records without cv count as consentVersion 1.
+  function consentVersion() { var n = +cfg.consentVersion; return n >= 1 && n % 1 === 0 ? n : 1; }
   function catKey() { return cats().sort().join(','); }
   function decide(c, action) {
     // Scripts that already ran cannot be unloaded: if the visitor withdraws a category whose
     // scripts ran on this page, the page is reloaded so they stop (reloadOnWithdraw: false to opt out).
     var gone = Object.keys(ran).filter(function (k) { return !c[k]; });
-    stored = { v: cfg.version, k: catKey(), id: (stored && stored.id) || uid(), ts: Date.now(), c: c };
+    stored = { v: cfg.version, cv: consentVersion(), k: catKey(), id: (stored && stored.id) || uid(), ts: Date.now(), c: c };
     writeStore(stored);
     apply(c, action);
     log(stored, action);   // sendBeacon survives the reload
@@ -373,7 +376,7 @@
   }
   function log(rec, action) {
     var t = tx();
-    var p = { site: cfg.site, consent_id: rec.id, config_version: rec.v, choices: rec.c, action: action, ts: rec.ts,
+    var p = { site: cfg.site, consent_id: rec.id, config_version: rec.v, consent_version: rec.cv, choices: rec.c, action: action, ts: rec.ts,
       lang: lang(), text_hash: textHash(t), url: location.href.split(/[?#]/)[0] };
     emit('log', p);
     if (!cfg.endpoint) return;
@@ -603,6 +606,7 @@
     // A ts more than a day in the future (visitor's clock was set ahead) would never expire: rejected too.
     var age = typeof s.ts === 'number' ? Date.now() - s.ts : NaN;
     if (!(age >= -864e5 && age <= maxAge() * 864e5)) return false;
+    if ((+s.cv || 1) !== consentVersion()) return false;
     return s.k ? s.k === catKey() : s.v === cfg.version;   // records before v0.3 have no k
   }
   // ---------- content added later (SPA routes, lazy-loaded blocks): same rules as on load ----------

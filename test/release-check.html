@@ -478,6 +478,22 @@ if (!FB_LOCAL) {
     check('invalid waitForUpdate falls back to 500', 'wait 500', defs[0] && defs[0].wait_for_update, defs.length === 1 && defs[0].wait_for_update === 500);
     p.done();
 
+    // ---------- 9. asking again on purpose: consentVersion ----------
+    group('9. consentVersion');
+    p = await open({ age: 10 });
+    check('record without cv is valid for consentVersion 1 (default)', 'restored', { consent: !!p.W.FrostBanner.getConsent() }, !!p.W.FrostBanner.getConsent());
+    p.done();
+    p = await open({ age: 10, cfg: JSON.stringify({ consentVersion: 2 }) });
+    check('consentVersion 2: an older record asks again', 'banner shown', { banner: !!p.card(), consent: p.W.FrostBanner.getConsent() }, !!p.card() && p.W.FrostBanner.getConsent() === null);
+    var lg = null; p.W.FrostBanner.on('log', function (x) { lg = x; });
+    p.sr().querySelector('button[data-a="accept"]').click();
+    var recCv = JSON.parse(p.W.localStorage.getItem('fb_consent') || '{}').cv;
+    check('the new record and the log carry consent version 2', 'cv 2, consent_version 2', { cv: recCv, log: lg && lg.consent_version }, recCv === 2 && lg && lg.consent_version === 2);
+    p.done();
+    p = await open({ age: 10, cfg: JSON.stringify({ consentVersion: 'x' }) });
+    check('invalid consentVersion counts as 1', 'restored', { consent: !!p.W.FrostBanner.getConsent() }, !!p.W.FrostBanner.getConsent());
+    p.done();
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');
