@@ -232,6 +232,13 @@
   function hostOf(u) { try { return new URL(u, location.href).hostname.replace(/^www\./, ''); } catch (e) { return ''; } }
   function size(v, unit) { return /^\d+(\.\d+)?$/.test(v || '') ? v + unit : /^\d+(\.\d+)?(px|%|rem|em|vh|vw)$/.test(v || '') ? v : ''; }
   function embeds(c) {
+    // A placeholder whose iframe has left the page (an SPA removed or replaced it) goes too,
+    // otherwise its "Allow and show" button would stay behind on its own.
+    var old = d.querySelectorAll('[data-fb-ph]');
+    for (var o = 0; o < old.length; o++) {
+      var fr = old[o]._fbFrame;
+      if (!fr || !fr.parentNode || fr.isConnected === false) old[o].parentNode.removeChild(old[o]);
+    }
     var n = d.querySelectorAll('iframe[data-src][data-category]');
     for (var i = 0; i < n.length; i++) {
       // The placeholder is linked to its iframe (not found as the previous sibling), so it survives
@@ -278,7 +285,7 @@
       if (!f.hasAttribute('data-fb-disp')) f.setAttribute('data-fb-disp', f.style.display || '');
       f.style.display = 'none';
       f.parentNode.insertBefore(p, f);
-      f._fbPh = p;
+      f._fbPh = p; p._fbFrame = f;
     }
   }
 
@@ -521,8 +528,10 @@
     watcher = new MutationObserver(function (list) {
       if (queued) return;
       for (var i = 0; i < list.length; i++) {
-        for (var j = 0; j < list[i].addedNodes.length; j++) {
-          if (!relevant(list[i].addedNodes[j])) continue;
+        // Added nodes: new content. Removed nodes: an iframe that left takes its placeholder along.
+        var nodes = Array.prototype.slice.call(list[i].addedNodes).concat(Array.prototype.slice.call(list[i].removedNodes));
+        for (var j = 0; j < nodes.length; j++) {
+          if (!relevant(nodes[j])) continue;
           // One pass per batch of mutations, after the page has finished inserting its nodes.
           queued = true;
           Promise.resolve().then(function () {

@@ -314,6 +314,26 @@ if (!FB_LOCAL) {
       !!mv.getAttribute('src') && mv.style.display !== 'none' && D.querySelectorAll('[data-fb-ph]').length === 0);
     p.done();
 
+    // ---------- 5. robustness (bugs found by the independent review) ----------
+    group('5. Robustness');
+    p = await open({});
+    D = p.D; spa = D.getElementById('spa'); spa.className = '';
+    var phCount = function () { return D.querySelectorAll('[data-fb-ph]').length; };
+    spa.appendChild(frame('marketing', 'rm1'));
+    await tick(200);
+    D.getElementById('rm1').remove();
+    await tick(200);
+    check('removed iframe takes its placeholder along', '0 placeholders', phCount() + ' placeholders', phCount() === 0);
+    spa.appendChild(frame('marketing', 'rp1'));
+    await tick(200);
+    var rp2 = frame('marketing', 'rp2');
+    D.getElementById('rp1').replaceWith(rp2);
+    await tick(200);
+    check('replaced iframe: one placeholder, next to the new iframe', '1 placeholder, before rp2',
+      { total: phCount(), beforeNew: !!(rp2.previousElementSibling && rp2.previousElementSibling.hasAttribute('data-fb-ph')) },
+      phCount() === 1 && rp2.previousElementSibling && rp2.previousElementSibling.hasAttribute('data-fb-ph'));
+    p.done();
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');
