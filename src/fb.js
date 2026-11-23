@@ -1,4 +1,4 @@
-/*! FrostBanner v0.5.0 — beautiful cookie banners */
+/*! FrostBanner v0.5.1 — beautiful cookie banners */
 (function (w, d) {
   'use strict';
   if (w.FrostBanner) return;
@@ -385,6 +385,9 @@
   // Status and source are set first, so they are already right in every listener of this choice.
   function apply(c, src) {
     state = c; status = 'decided'; source = src;
+    // The preferences show the choice in force (also right after "Accept all"/"Reject all"), unless
+    // the visitor is changing the switches of an open panel right now (start() keeps that draft).
+    if (!draftTouched) draft = assign({}, c);
     gcm('update', c); purge(c); unblock(c); embeds(c); emit('change', { choices: c, source: src });
   }
   // Ask again only when the set of categories changes, not on every text/colour edit (version
@@ -447,8 +450,14 @@
     if (a === 'accept') decide(acceptAll(), 'accept_all');
     else if (a === 'reject') decide(pick(function () { return false; }), 'reject_all');
     else if (a === 'save') decide(pick(function (k) { return granted(draft, k); }), 'custom');
-    else if (a === 'prefs') render('prefs');
-    else if (a === 'fab') render('prefs');
+    else if (a === 'prefs' || a === 'fab') openPrefs();
+  }
+  // A panel opened anew starts from the choice in force (nothing but necessary before a choice):
+  // switches changed in a panel that was closed without saving are dropped, so "Save choices"
+  // never grants or withdraws anything the visitor did not see. An open panel is left as it is.
+  function openPrefs() {
+    if (!(mode === 'banner' && view === 'prefs')) { draftTouched = false; draft = state ? assign({}, state) : { necessary: true }; }
+    render('prefs');
   }
 
   // ---------- UI (Shadow DOM, no global styles) ----------
@@ -758,8 +767,7 @@
     if (!keep) draftTouched = false;
     stored = readStore();
     if (valid(stored)) {
-      if (!keep) draft = assign({}, stored.c);
-      apply(stored.c, 'restore');
+      apply(stored.c, 'restore');   // also the draft, unless an open panel's draft is kept
       if (prefsOpen) render('prefs', quiet); else showFab();
       return;
     }
@@ -795,7 +803,6 @@
     embeds({});
     if (!inRegion()) {
       var all = acceptAll();
-      if (!keep) draft = assign({}, all);       // open preferences show what was applied
       apply(all, 'outside_region');
       if (prefsOpen) render('prefs', quiet);
       emit('skip', { country: cfg.geo.country });
@@ -845,8 +852,8 @@
 
   // ---------- public API ----------
   w.FrostBanner = {
-    version: '0.5.0',
-    open: function () { render('prefs'); },
+    version: '0.5.1',
+    open: function () { openPrefs(); },
     getConsent: function () { return state ? assign({}, state) : null; },
     getStatus: function () { return status; },   // 'pending' | 'shown' | 'decided'
     getSource: function () { return source; },   // 'restore' | 'outside_region' | 'accept_all' | 'reject_all' | 'custom' | null

@@ -4,6 +4,12 @@ All notable changes to the FrostBanner widget. The format follows [Keep a Change
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-23
+
+### Fixed
+- The preferences opened after a choice (`FrostBanner.open()`, the floating button) now show the choice in force. In 0.5.0 they could show the switches from page load: after "Accept all" every switch was off, so "Save choices" without changes withdrew the consent just given; after a restored choice and "Reject all" the old switches were on, so "Save choices" granted them again.
+- Switches changed in a panel that was closed without saving (Escape) are dropped: the panel opens again with the choice in force.
+
 ## [0.5.0] - 2026-11-23
 
 ### Added

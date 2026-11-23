@@ -1211,6 +1211,79 @@ if (!FB_LOCAL) {
       check('21. custom category keys: group stopped by an exception', 'no exception', String(e && e.message || e), false);
     }
 
+    // ---------- 22. preferences opened after a choice show that choice (0.5.1) ----------
+    try {
+      group('22. Preferences after a choice show the choice in force');
+      var sw22 = function (pp) {
+        var o = {}; Array.prototype.forEach.call(pp.sr().querySelectorAll('[data-c]'), function (x) { o[x.getAttribute('data-c')] = x.checked; }); return o;
+      };
+      var same22 = function (a, b) { return !!a && !!b && ['analytics', 'marketing', 'functional'].every(function (k) { return !!a[k] === !!b[k]; }); };
+      // "Accept all" in the banner, then open(): every switch on; "Save choices" untouched withdraws nothing
+      p = await open({});
+      p.sr().querySelector('button[data-a="accept"]').click();
+      p.W.FrostBanner.open();
+      var s22a = sw22(p);
+      check('"Accept all", then open(): analytics, marketing, functional on', 'all on',
+        s22a, s22a.analytics === true && s22a.marketing === true && s22a.functional === true);
+      p.sr().querySelector('button[data-a="save"]').click();
+      var c22a = p.W.FrostBanner.getConsent();
+      check('"Save choices" without touching the switches keeps the consent', 'all true',
+        { consent: c22a, source: p.W.FrostBanner.getSource() },
+        !!c22a && c22a.analytics === true && c22a.marketing === true && c22a.functional === true);
+      p.done();
+      // restored choice (analytics + functional), "Reject all" in the panel, then open(): all off; Save grants nothing
+      p = await open({ age: 10, cfg: JSON.stringify({ reloadOnWithdraw: false }) });
+      p.W.FrostBanner.open();
+      var s22r = sw22(p);
+      check('restored choice, open(): switches show it', 'analytics on, marketing off, functional on',
+        s22r, s22r.analytics === true && s22r.marketing === false && s22r.functional === true);
+      p.sr().querySelector('button[data-a="reject"]').click();
+      p.W.FrostBanner.open();
+      var s22b = sw22(p);
+      check('then "Reject all", then open(): every switch off', 'all off',
+        s22b, s22b.analytics === false && s22b.marketing === false && s22b.functional === false);
+      p.sr().querySelector('button[data-a="save"]').click();
+      var c22b = p.W.FrostBanner.getConsent();
+      check('"Save choices" without touching the switches grants nothing back', 'all false', c22b,
+        !!c22b && c22b.analytics === false && c22b.marketing === false && c22b.functional === false);
+      p.done();
+      // custom choice (marketing only), then open(): the switches match it
+      p = await open({});
+      p.W.FrostBanner.open();
+      p.sr().querySelector('input[data-c="marketing"]').click();
+      p.sr().querySelector('button[data-a="save"]').click();
+      var c22c = p.W.FrostBanner.getConsent();
+      p.W.FrostBanner.open();
+      var s22c = sw22(p);
+      check('custom choice, then open(): switches match the choice', 'marketing on, analytics and functional off',
+        { consent: c22c, switches: s22c }, same22(c22c, s22c) && s22c.marketing === true && s22c.analytics === false);
+      // switches changed in a panel closed without saving are dropped on the next open
+      p.sr().querySelector('input[data-c="analytics"]').click();
+      key(p, 'Escape'); await tick(50);
+      p.W.FrostBanner.open();
+      var s22d = sw22(p);
+      check('a panel closed with Escape drops its unsaved switches: open() shows the choice in force', 'analytics off (as saved)',
+        s22d, same22(c22c, s22d) && s22d.analytics === false);
+      // the floating button opens the same, current state
+      key(p, 'Escape'); await tick(50);
+      var fab22 = p.sr().querySelector('.fab');
+      if (fab22) fab22.click();
+      var s22e = fab22 ? sw22(p) : null;
+      check('floating button: the panel shows the choice in force', 'marketing on, analytics off',
+        { fab: !!fab22, switches: s22e }, !!fab22 && same22(c22c, s22e));
+      p.done();
+      // GPC: "Accept all" leaves marketing off, and the panel shows marketing off
+      p = await open({ gpc: '1' });
+      p.sr().querySelector('button[data-a="accept"]').click();
+      p.W.FrostBanner.open();
+      var s22g = sw22(p), c22g = p.W.FrostBanner.getConsent();
+      check('GPC, "Accept all", then open(): switches show what was applied', 'analytics on, marketing off',
+        { consent: c22g, switches: s22g }, same22(c22g, s22g) && s22g.analytics === true && s22g.marketing === false);
+      p.done();
+    } catch (e) {
+      check('22. preferences after a choice: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');
