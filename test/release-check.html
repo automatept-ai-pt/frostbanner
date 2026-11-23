@@ -56,8 +56,12 @@
     JSON.parse(q.get('cfg') || '{}'));
   // Loaded synchronously (as with a plain <script> tag), so the widget sees the config above.
   var src = q.get('bundle') || '../dist/fb.min.js';
-  // never test a stale bundle from the browser cache
-  src += (src.indexOf('?') < 0 ? '?' : '&') + 'nocache=' + Date.now();
+  // never test a stale bundle from the browser cache (the query goes before any #fragment)
+  var hash = src.indexOf('#') > -1 ? src.slice(src.indexOf('#')) : '';
+  src = src.slice(0, src.length - hash.length);
+  src += (src.indexOf('?') < 0 ? '?' : '&') + 'nocache=' + Date.now() + hash;
+  // ?pregtag=1: the page defines its own gtag() before FrostBanner loads
+  if (q.get('pregtag') === '1') { window.gtagCalls = []; window.gtag = function () { window.gtagCalls.push(Array.prototype.slice.call(arguments)); }; }
   document.write('<script src="' + src.replace(/[<>"&]/g, encodeURIComponent) + '"><\/script>');
 })();
 </script>
@@ -771,6 +775,13 @@ if (!FB_LOCAL) {
         gcmCalls(p) === 0 && cmEv.length >= 2 && cmEv.every(function (d) { return d.gtm === true; }));
       p.W.FrostBanner.reset(); await tick(100);
       check('GTM mode: reset() sends no gtag command either', '0 commands', gcmCalls(p), gcmCalls(p) === 0);
+      p.done();
+      p = await open({ pregtag: '1', cfg: JSON.stringify({ gtm: true }) });
+      var cm0 = p.W.fbDetails.filter(function (x) { return x.name === 'consentmode'; })[0];
+      p.sr().querySelector('button[data-a="accept"]').click();
+      check('GTM mode: a gtag() defined by the page is never called by FrostBanner', '0 calls', p.W.gtagCalls, p.W.gtagCalls.length === 0);
+      check('GTM mode: "consentmode" default state matches normal mode (security_storage, wait_for_update)', 'security_storage granted, wait 500',
+        cm0 && cm0.detail.state, !!cm0 && cm0.detail.kind === 'default' && cm0.detail.state.security_storage === 'granted' && cm0.detail.state.wait_for_update === 500 && cm0.detail.state.ad_storage === 'denied');
       p.done();
       p = await open({ cfg: JSON.stringify({ gtm: 'true' }) });
       check('gtm: "true" (a string) is not GTM mode: Consent Mode default is sent', '1 consent default',

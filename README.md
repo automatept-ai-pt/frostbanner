@@ -94,6 +94,10 @@ If Consent Mode is handled by the FrostBanner template in Google Tag Manager, se
 
 `gtm` is read only from the inline config (the dashboard settings arrive too late to change it) and only the boolean `true` switches it on.
 
+**Important:** with `gtm: true` FrostBanner no longer sends the "everything denied" default. The GTM template must set it, on the **Consent Initialization – All Pages** trigger, and must update it when the visitor decides. Without such a template Google tags have no consent default at all and may set cookies before the visitor chooses — do not use this mode then.
+
+What FrostBanner provides in GTM mode for the template to read: the first-party cookie `fb_consent` (JSON with the choices in `c`, see "What is stored"), `FrostBanner.getConsent()`, and the `change` / `consentmode` events (also dispatched on `window` as `frostbanner:<name>`). It pushes nothing to `dataLayer`.
+
 ## JavaScript API
 
 ```js

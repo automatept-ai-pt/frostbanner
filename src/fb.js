@@ -181,12 +181,15 @@
   }
   function gcm(kind, c) {
     var o = gcmState(c);
-    if (gtmMode) { emit('consentmode', { kind: kind, state: o, gtm: true }); return; }
+    var g = cfg.consentMode && typeof cfg.consentMode === 'object' ? cfg.consentMode : {};
     if (kind === 'default') {
-      var g = cfg.consentMode && typeof cfg.consentMode === 'object' ? cfg.consentMode : {};
       var wait = +g.waitForUpdate;
       o.security_storage = 'granted';
       o.wait_for_update = g.waitForUpdate != null && wait >= 0 && wait <= 1e4 ? wait : 500;
+    }
+    // GTM mode: same state in the event as in normal mode, but no gtag command.
+    if (gtmMode) { emit('consentmode', { kind: kind, state: o, gtm: true }); return; }
+    if (kind === 'default') {
       var reg = (Array.isArray(g.region) ? g.region : []).filter(function (r) { return typeof r === 'string' && /^[A-Za-z]{2}(-[A-Za-z0-9]{1,3})?$/.test(r); });
       if (reg.length) {
         // Denied by default only in these regions (Google uses the most specific default);
