@@ -23,7 +23,7 @@ The hosted service at [frostbanner.com](https://frostbanner.com) adds the dashbo
 - **Respects Global Privacy Control**: when the browser sends the GPC signal, "Accept all" leaves Marketing off (the visitor can still switch it on in the preferences; `respectGpc: false` turns this off)
 - **Removes known analytics and marketing cookies** when consent is withdrawn
 - Built-in texts in **29 languages** (all EU languages plus Norwegian, Catalan, Turkish, Ukrainian and Russian), all texts can be replaced
-- **No dependencies**, about 54 KB minified (about 18 KB compressed), Shadow DOM (does not touch your site's CSS)
+- **No dependencies**, about 60 KB minified (about 23 KB compressed), Shadow DOM (does not touch your site's CSS)
 - Asks again when the set of categories changes, after `maxAgeDays`, or when you raise `consentVersion` (for example after changing your cookie policy). Text and colour edits do not ask again
 
 ## Install

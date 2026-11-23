@@ -1,4 +1,4 @@
-/*! FrostBanner v0.4.2 — beautiful cookie banners */
+/*! FrostBanner v0.5.0 — beautiful cookie banners */
 (function (w, d) {
   'use strict';
   if (w.FrostBanner) return;
@@ -708,7 +708,7 @@
 
   // ---------- public API ----------
   w.FrostBanner = {
-    version: '0.4.2',
+    version: '0.5.0',
     open: function () { render('prefs'); },
     getConsent: function () { return state ? assign({}, state) : null; },
     on: function (e, f) { (L[e] = L[e] || []).push(f); },

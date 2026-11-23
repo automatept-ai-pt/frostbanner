@@ -4,10 +4,13 @@ All notable changes to the FrostBanner widget. The format follows [Keep a Change
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-23
+
 ### Added
+- Global Privacy Control: when the browser sends the GPC signal, "Accept all" leaves Marketing off; the visitor can still switch it on in the preferences (`respectGpc: false` turns this off).
 - `consentVersion`: raise it to ask every visitor again (for example after a cookie policy change).
 - Google Consent Mode options in the inline config: `consentMode.waitForUpdate`, `adsDataRedaction`, `urlPassthrough`, `region`.
-- The consent log record includes the banner language (`lang`), a fingerprint of the texts shown (`text_hash`) and `consent_version`.
+- The consent log record includes the banner language (`lang`), a fingerprint of the texts shown (`text_hash`), `consent_version` and, with Global Privacy Control, `gpc`.
 - When a visitor withdraws a category whose scripts already ran on the page, the page reloads so they stop (`reloadOnWithdraw: false` turns this off; event `reload`).
 - Blocked scripts and iframes added after page load (single-page apps, lazy-loaded content) are handled.
 - `FrostBanner.languages` lists the built-in languages.
@@ -17,6 +20,8 @@ All notable changes to the FrostBanner widget. The format follows [Keep a Change
 - Blocked scripts run in page order after consent: an inline script waits for the external scripts above it (at most 15 seconds).
 - Keyboard: in the centred window Tab stays inside the banner; after a choice the focus moves to the floating button; Escape leaves the preferences.
 - Custom category texts are merged per category instead of replacing all of them.
+- The bundle is about 60 KB minified (about 23 KB compressed), up from about 55 KB.
+- Documentation: the README documents the whole JavaScript API, the Consent Mode options and the build; its screenshots are WebP and much lighter.
 
 ### Fixed
 - The stored choice now expires after `maxAgeDays` also when it is read from local storage.
