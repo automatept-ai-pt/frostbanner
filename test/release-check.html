@@ -63,14 +63,16 @@
   }
   // ?slowcfg=1: the dashboard settings request takes 1.5 s (time to act before start() runs)
   // ?slowcfg=2: same delay, and the "dashboard" answers with other categories (necessary + analytics only)
-  if (/^[12]$/.test(q.get('slowcfg') || '') && window.fetch) {
-    var realFetch = window.fetch, other = q.get('slowcfg') === '2';
+  // ?slowcfg=3: same delay, the "dashboard" answers: Pro, EU-only banner, visitor in the US
+  if (/^[123]$/.test(q.get('slowcfg') || '') && window.fetch) {
+    var realFetch = window.fetch, mode3 = q.get('slowcfg');
+    var fake = mode3 === '2' ? { template: 'frost', plan: 'pro', lang: 'en', categories: ['necessary', 'analytics'], geo: {} }
+      : mode3 === '3' ? { template: 'frost', plan: 'pro', lang: 'en', categories: ['necessary', 'analytics', 'marketing', 'functional'], geo: { mode: 'eu', country: 'US' } } : null;
     window.fetch = function (u) {
       var a = arguments;
       if (!/\/v1\/config\//.test(String(u))) return realFetch.apply(window, a);
       return new Promise(function (r) { setTimeout(r, 1500); }).then(function () {
-        return other ? new Response(JSON.stringify({ template: 'frost', plan: 'pro', lang: 'en', categories: ['necessary', 'analytics'], geo: {} }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } }) : realFetch.apply(window, a);
+        return fake ? new Response(JSON.stringify(fake), { status: 200, headers: { 'Content-Type': 'application/json' } }) : realFetch.apply(window, a);
       });
     };
   }
@@ -999,6 +1001,28 @@ if (!FB_LOCAL) {
       p.sr().querySelector('button[data-a="reject"]').click();
       check('an element the site made inert itself stays inert', 'still inert', own.hasAttribute('inert'), own.hasAttribute('inert'));
       p.done();
+      // banner left inside a former editor container, then centre window on a real page: its ancestors are not made inert
+      p = await open({ cfg: JSON.stringify({ layout: 'center', container: '#spa' }) });
+      p.D.getElementById('spa').className = '';
+      p.W.FrostBanner.configure({ container: null }); await tick(50);
+      var hostC = p.D.getElementById('frostbanner');
+      check('host inside a former container: no ancestor of the banner is inert', 'no inert ancestor',
+        { inertAncestor: !!(hostC.parentElement && hostC.parentElement.closest('[inert]')) }, !(hostC.parentElement && hostC.parentElement.closest('[inert]')));
+      p.sr().querySelector('button[data-a="reject"]').click();
+      check('and the banner still works', 'decided', p.W.FrostBanner.getStatus(), p.W.FrostBanner.getStatus() === 'decided');
+      p.done();
+      // the page removes the banner while the centre window is open: the page is released
+      p = await open({ cfg: JSON.stringify({ layout: 'center' }) });
+      p.D.getElementById('frostbanner').remove(); await tick(50);
+      check('banner removed by the page while the centre window is open: nothing stays inert', '0 inert', p.D.querySelectorAll('[inert]').length, p.D.querySelectorAll('[inert]').length === 0);
+      p.W.FrostBanner.open(); await tick(50);
+      var hostR = p.D.getElementById('frostbanner');
+      check('then FrostBanner.open(): the banner is put back and works, its window is modal again', 'host in the page, panel shown, not inert itself',
+        { connected: !!hostR && hostR.isConnected, panel: !!p.sr().querySelector('.card.p'), hostInert: !!(hostR && hostR.closest('[inert]')) },
+        !!hostR && hostR.isConnected && !!p.sr().querySelector('.card.p') && !hostR.closest('[inert]'));
+      p.sr().querySelector('button[data-a="reject"]').click();
+      check('and after the choice nothing stays inert', '0 inert', p.D.querySelectorAll('[inert]').length, p.D.querySelectorAll('[inert]').length === 0);
+      p.done();
       p = await open({});
       check('corner layout: nothing is made inert', '0 inert', p.D.querySelectorAll('[inert]').length, p.D.querySelectorAll('[inert]').length === 0);
       p.done();
@@ -1061,6 +1085,44 @@ if (!FB_LOCAL) {
       check('stored choice, panel untouched: it stays open and shows the stored choice', 'panel open, analytics on, marketing off, decided/restore',
         { panel: !!p.sr().querySelector('.card.p'), analytics: swA2 && swA2.checked, marketing: swM2 && swM2.checked, status: p.W.FrostBanner.getStatus(), source: p.W.FrostBanner.getSource() },
         !!p.sr().querySelector('.card.p') && !!swA2 && swA2.checked && !!swM2 && !swM2.checked && p.W.FrostBanner.getStatus() === 'decided' && p.W.FrostBanner.getSource() === 'restore');
+      p.done();
+      // dashboard settings arriving while the panel is open: the panel is redrawn with the final categories
+      p = await open({ dyn: '1', slowcfg: '2', cfg: JSON.stringify({ site: 'rc-prefs3-' + Date.now() }) }); await waitLoaded(p);
+      p.W.FrostBanner.open();
+      var before3 = p.sr().querySelectorAll('[data-c]').length;
+      p.sr().querySelector('input[data-c="analytics"]').click();
+      await waitFor(function () { return p.W.fbEvents.indexOf('shown') > -1; }, 6000);
+      var sw3 = Array.prototype.map.call(p.sr().querySelectorAll('[data-c]'), function (x) { return x.getAttribute('data-c') + (x.checked ? '+' : ''); });
+      check('panel open while dashboard settings arrive: redrawn with their categories, changed switch kept', '4 switches before, then necessary+, analytics+',
+        { before: before3, after: sw3 }, before3 === 4 && sw3.join() === 'necessary+,analytics+');
+      p.done();
+      // the redraw at the start does not take the focus from the page
+      p = await open({ dyn: '1', slowcfg: '1', cfg: JSON.stringify({ site: 'rc-prefs6-' + Date.now() }) }); await waitLoaded(p);
+      p.W.FrostBanner.open();
+      var field = p.D.createElement('input'); p.D.getElementById('spa').className = ''; p.D.getElementById('spa').appendChild(field); field.focus();
+      await waitFor(function () { return p.W.fbEvents.indexOf('shown') > -1; }, 6000);
+      check('panel redrawn at the start while the visitor types in the page: focus stays in the page field', 'page field focused',
+        { focusInField: p.D.activeElement === field, panel: !!p.sr().querySelector('.card.p') }, p.D.activeElement === field && !!p.sr().querySelector('.card.p'));
+      p.done();
+      // a draft from a panel that was closed again (Escape) is dropped: the floating button later shows the stored choice
+      p = await open({ dyn: '1', slowcfg: '1', age: 10, cfg: JSON.stringify({ site: 'rc-prefs4-' + Date.now() }) }); await waitLoaded(p);
+      p.W.FrostBanner.open();
+      p.sr().querySelector('input[data-c="marketing"]').click();          // marketing on in the draft
+      key(p, 'Escape');
+      await waitFor(function () { return p.W.FrostBanner.getStatus() === 'decided'; }, 6000);
+      p.W.FrostBanner.open();
+      var swM4 = p.sr().querySelector('input[data-c="marketing"]');
+      check('draft of a panel closed before the start is dropped: reopened panel shows the stored choice', 'marketing off (stored)',
+        { marketing: swM4 && swM4.checked }, !!swM4 && !swM4.checked);
+      p.done();
+      // outside the region with the panel open: it shows what was applied
+      p = await open({ dyn: '1', slowcfg: '3', cfg: JSON.stringify({ site: 'rc-prefs5-' + Date.now() }) }); await waitLoaded(p);
+      p.W.FrostBanner.open();
+      await waitFor(function () { return p.W.FrostBanner.getStatus() === 'decided'; }, 6000); await tick(50);
+      var swA5 = p.sr().querySelector('input[data-c="analytics"]');
+      check('outside the region, panel open at the start: switches show the applied choice', 'panel open, analytics on, outside_region',
+        { panel: !!p.sr().querySelector('.card.p'), analytics: swA5 && swA5.checked, source: p.W.FrostBanner.getSource() },
+        !!p.sr().querySelector('.card.p') && !!swA5 && swA5.checked && p.W.FrostBanner.getSource() === 'outside_region');
       p.done();
       try { Object.keys(localStorage).forEach(function (k) { if (/^fb_cfg_rc-prefs/.test(k)) localStorage.removeItem(k); }); } catch (e) {}
     } catch (e) {

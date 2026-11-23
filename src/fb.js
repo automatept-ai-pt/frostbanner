@@ -528,6 +528,12 @@
       '.chat{right:8px}.chat,.split{bottom:calc(8px + env(safe-area-inset-bottom,0px))}.card.p{max-height:calc(100vh - 16px);max-height:calc(100dvh - 16px)}}';
   }
   function mount() {
+    if (host && !host.isConnected) {
+      // The page removed the banner (e.g. an SPA replaced <body>): put the same host back.
+      var back = null;
+      if (cfg.container) { try { back = d.querySelector(cfg.container); } catch (e) {} }
+      (back || d.body || d.documentElement).appendChild(host);
+    }
     if (host) return;
     host = d.createElement('div');
     host.id = 'frostbanner';
@@ -577,7 +583,8 @@
     return '<style>' + css() + '</style><div class="w ' + th + (cfg.glass === false ? ' solid' : '') + (cfg.glow ? ' glow' : '') +
       (cfg.container ? ' in-c' : '') + '">' + (layout ? '<div class="' + layout + '">' + inner + '</div>' : inner) + '</div>';
   }
-  function render(v) {
+  // quiet: redraw without moving the focus (start() redrawing a panel the visitor is not using)
+  function render(v, quiet) {
     if (v === null) return showFab();
     mount(); mode = 'banner'; view = v;
     if (status === 'pending') status = 'shown';   // open()/show() before start(): the banner is on screen
@@ -630,7 +637,7 @@
     root.innerHTML = wrap(h + '</div>' + after, lay);
     setModal(lay === 'center' && !cfg.container && !preview);
     if (typing) setTimeout(function () { typed = true; var c = root && root.querySelector('.typing'); if (c) c.classList.remove('typing'); }, 900);
-    if (v === 'prefs' || lay === 'center') { var f = root.querySelector('.card button, .card input:not([disabled])'); if (f) f.focus({ preventScroll: true }); }
+    if (!quiet && (v === 'prefs' || lay === 'center')) { var f = root.querySelector('.card button, .card input:not([disabled])'); if (f) f.focus({ preventScroll: true }); }
   }
   function showFab() {
     mount(); mode = 'fab'; setModal(false);
@@ -642,15 +649,20 @@
   // can move the focus out of the window. Only elements FrostBanner made inert are restored; a
   // focusin guard covers browsers without inert and elements added to the page meanwhile.
   var modalOn = false, inerted = [];
-  function guard(e) { if (modalOn && host && e.target !== host && !host.contains(e.target)) focusIn('.card button'); }
+  function guard(e) {
+    if (modalOn && (!host || !host.isConnected)) return setModal(false);   // banner removed by the page
+    if (modalOn && e.target !== host && !host.contains(e.target)) focusIn('.card button');
+  }
   function setModal(on) {
+    if (on && (!host || !host.isConnected)) on = false;   // never a modal page without a visible banner
     if (on === modalOn) return;
     modalOn = on;
     if (on) {
       var kids = d.body ? d.body.children : [];
       for (var i = 0; i < kids.length; i++) {
         var el = kids[i];
-        if (el !== host && !el.hasAttribute('inert') && !/^(SCRIPT|STYLE|LINK|TEMPLATE)$/.test(el.tagName)) { el.setAttribute('inert', ''); inerted.push(el); }
+        // never the banner itself or an element that contains it (host left in a former container)
+        if (el !== host && !el.contains(host) && !el.hasAttribute('inert') && !/^(SCRIPT|STYLE|LINK|TEMPLATE)$/.test(el.tagName)) { el.setAttribute('inert', ''); inerted.push(el); }
       }
       d.addEventListener('focusin', guard, true);
     } else {
@@ -693,6 +705,8 @@
   function watch() {
     if (watcher || typeof MutationObserver !== 'function') return;
     watcher = new MutationObserver(function (list) {
+      // the page removed the banner while the centre window was open: release the page
+      if (modalOn && (!host || !host.isConnected)) setModal(false);
       if (queued) return;
       for (var i = 0; i < list.length; i++) {
         // Added nodes: new content. Removed nodes: an iframe that left takes its placeholder along.
@@ -720,14 +734,18 @@
     // the settings request was pending) stays in force if it is still valid for the final settings:
     // no second 'change' event; only the content parsed since then gets the same rules.
     if (state && valid(stored)) { unblock(state); embeds(state); showFab(); return; }
-    // Preferences opened before the start (FrostBanner.open() from the page) stay open, and the
-    // switches the visitor already changed are kept.
-    var prefsOpen = mode === 'banner' && view === 'prefs';
+    // Preferences opened before the start (FrostBanner.open() from the page) stay open and keep the
+    // switches the visitor changed; they are redrawn, because the dashboard settings that arrived
+    // meanwhile may change texts, layout and categories. A draft from a panel that was closed again
+    // is dropped.
+    var prefsOpen = mode === 'banner' && view === 'prefs', keep = prefsOpen && draftTouched;
+    var quiet = !(root && root.activeElement);   // focus elsewhere on the page: the redraw must not take it
+    if (!keep) draftTouched = false;
     stored = readStore();
     if (valid(stored)) {
-      if (!draftTouched) draft = assign({}, stored.c);
+      if (!keep) draft = assign({}, stored.c);
       apply(stored.c, 'restore');
-      if (prefsOpen) { if (!draftTouched) render('prefs'); } else showFab();   // untouched: show the stored choice
+      if (prefsOpen) render('prefs', quiet); else showFab();
       return;
     }
     // No valid choice (none yet, or one made before the final settings changed the categories:
@@ -740,20 +758,24 @@
         emit('reload', { categories: Object.keys(ran) });
         // The page is going away: no banner and no 'shown' now; the reloaded page asks.
         stored = null; state = null; source = null; status = 'pending';
+        embeds({});   // in case the reload is cancelled (beforeunload): withdrawn iframes are unloaded
         try { location.reload(); } catch (e) {}
         return;
       }
     }
     stored = null; state = null; source = null;
-    if (!(prefsOpen && draftTouched)) draft = { necessary: true };
+    if (!keep) draft = { necessary: true };
     embeds({});
     if (!inRegion()) {
-      apply(acceptAll(), 'outside_region');   // open preferences stay open
+      var all = acceptAll();
+      if (!keep) draft = assign({}, all);       // open preferences show what was applied
+      apply(all, 'outside_region');
+      if (prefsOpen) render('prefs', quiet);
       emit('skip', { country: cfg.geo.country });
       return;
     }
     status = 'shown';
-    if (!prefsOpen) render('main');
+    if (prefsOpen) render('prefs', quiet); else render('main');
     emit('shown', { layout: cfg.layout });
   }
 
