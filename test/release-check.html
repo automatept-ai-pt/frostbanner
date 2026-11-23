@@ -1009,6 +1009,31 @@ if (!FB_LOCAL) {
       check('18. inert: group stopped by an exception', 'no exception', String(e && e.message || e), false);
     }
 
+    // ---------- 19. editor preview flag ----------
+    try {
+      group('19. Editor preview flag');
+      async function previewWithdraw(leave) {
+        var pp = await open({ cfg: JSON.stringify({ container: '#spa' }) });
+        pp.D.getElementById('spa').className = '';
+        acceptAnalyticsOnly(pp);
+        await waitFor(function () { return pp.W.order.indexOf('lib') > -1; });
+        if (leave) pp.W.FrostBanner.configure({ container: null });
+        pp.W.__beforeWithdraw = true;
+        pp.W.FrostBanner.open();
+        pp.sr().querySelector('input[data-c="analytics"]').click(); pp.sr().querySelector('button[data-a="save"]').click();
+        await tick(400);
+        await waitFor(function () { var Wn = pp.f.contentWindow; return Wn && Wn.FrostBanner && Wn.document.readyState === 'complete'; }, 8000);
+        var res = { reloaded: !pp.f.contentWindow.__beforeWithdraw };
+        pp.done(); return res;
+      }
+      var pv1 = await previewWithdraw(false);
+      check('editor preview (container): withdrawal does not reload', 'not reloaded', pv1, !pv1.reloaded);
+      var pv2 = await previewWithdraw(true);
+      check('after configure({ container: null }): withdrawal reloads like on a real page', 'reloaded', pv2, pv2.reloaded);
+    } catch (e) {
+      check('19. preview flag: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');

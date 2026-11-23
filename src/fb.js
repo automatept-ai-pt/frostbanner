@@ -797,7 +797,13 @@
     templates: Object.keys(TPL),
     languages: Object.keys(T),
     show: function () { render('main'); },
-    configure: function (o) { o = o || {}; if (TPL[o.template]) assign(cfg, TPL[o.template]); assign(cfg, o); rerender(); },
+    configure: function (o) {
+      o = o || {};
+      if (TPL[o.template]) assign(cfg, TPL[o.template]);
+      assign(cfg, o);
+      if ('container' in o) preview = !!o.container;   // leaving the editor preview: real-page behaviour again
+      rerender();
+    },
     // New visitor simulation. On a real site, call this and reload the page:
     // scripts that already ran cannot be unloaded.
     reset: function () {
