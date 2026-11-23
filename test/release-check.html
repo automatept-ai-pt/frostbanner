@@ -43,6 +43,8 @@
     if (q.get('age') !== 'none') rec.ts = Date.now() - Number(q.get('age')) * 864e5;
     localStorage.setItem('fb_consent', JSON.stringify(rec));   // localStorage only: as after the cookie expired
   }
+  // ?gpc=1: the browser sends the Global Privacy Control signal
+  if (q.get('gpc') === '1') { try { Object.defineProperty(navigator, 'globalPrivacyControl', { value: true, configurable: true }); } catch (e) {} }
   window.pwned = 0;
   window.order = [];
   window.fbEvents = [];
@@ -580,6 +582,25 @@ if (!FB_LOCAL) {
       fab ? { label: fab.getAttribute('aria-label'), title: fab.getAttribute('title') } : 'no fab',
       fab && fab.getAttribute('aria-label') === 'Cookie settings' && fab.getAttribute('title') === 'Cookie settings');
     p.done();
+
+    // ---------- 14. Global Privacy Control ----------
+    group('14. Global Privacy Control');
+    async function gpcCase(params, how) {
+      var pp = await open(params), rec = null;
+      pp.W.FrostBanner.on('log', function (x) { rec = x; });
+      if (how === 'accept') pp.sr().querySelector('button[data-a="accept"]').click();
+      else { pp.W.FrostBanner.open(); pp.sr().querySelector('input[data-c="marketing"]').click(); pp.sr().querySelector('button[data-a="save"]').click(); }
+      var cc = pp.W.FrostBanner.getConsent(); pp.done();
+      return { marketing: cc && cc.marketing, analytics: cc && cc.analytics, gpc: rec && rec.gpc };
+    }
+    var g1 = await gpcCase({}, 'accept');
+    check('no GPC: "Accept all" includes marketing', 'marketing on, no gpc flag', g1, g1.marketing === true && g1.analytics === true && !g1.gpc);
+    var g2 = await gpcCase({ gpc: '1' }, 'accept');
+    check('GPC: "Accept all" leaves marketing off, logged with gpc', 'marketing off, analytics on, gpc true', g2, g2.marketing === false && g2.analytics === true && g2.gpc === true);
+    var g3 = await gpcCase({ gpc: '1' }, 'prefs');
+    check('GPC: marketing switched on explicitly in the preferences is allowed', 'marketing on', g3, g3.marketing === true);
+    var g4 = await gpcCase({ gpc: '1', cfg: JSON.stringify({ respectGpc: false }) }, 'accept');
+    check('GPC with respectGpc: false: "Accept all" includes marketing', 'marketing on', g4, g4.marketing === true && !g4.gpc);
 
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });

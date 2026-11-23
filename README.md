@@ -20,6 +20,7 @@ The hosted service at [frostbanner.com](https://frostbanner.com) adds the dashbo
 - **Blocks YouTube, Google Maps and other iframes** until consent, with an "Allow and show" placeholder
 - **Google Consent Mode v2**: `ad_storage`, `ad_user_data`, `ad_personalization`, `analytics_storage`, `functionality_storage`, `personalization_storage`
 - **Equal "Accept all" and "Reject all" buttons**, granular categories, a floating button to change the choice at any time
+- **Respects Global Privacy Control**: when the browser sends the GPC signal, "Accept all" leaves Marketing off (the visitor can still switch it on in the preferences; `respectGpc: false` turns this off)
 - **Removes known analytics and marketing cookies** when consent is withdrawn
 - Built-in texts in **29 languages** (all EU languages plus Norwegian, Catalan, Turkish, Ukrainian and Russian), all texts can be replaced
 - **No dependencies**, about 54 KB minified (about 18 KB compressed), Shadow DOM (does not touch your site's CSS)

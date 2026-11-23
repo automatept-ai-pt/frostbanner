@@ -57,6 +57,7 @@
     policyUrl: '#', geo: { mode: 'all', country: null }, // mode: all | eu
     endpoint: null, maxAgeDays: 180, branding: true,
     reloadOnWithdraw: true,      // reload the page when a category whose scripts already ran is withdrawn
+    respectGpc: true,            // Global Privacy Control: "Accept all" leaves marketing off
     container: null,             // selector: render inside an element (editor preview)
     texts: {}
   };
@@ -379,6 +380,7 @@
     var t = tx();
     var p = { site: cfg.site, consent_id: rec.id, config_version: rec.v, consent_version: rec.cv, choices: rec.c, action: action, ts: rec.ts,
       lang: lang(), text_hash: textHash(t), url: location.href.split(/[?#]/)[0] };
+    if (gpc()) p.gpc = true;
     emit('log', p);
     if (!cfg.endpoint) return;
     try {
@@ -388,8 +390,13 @@
       }
     } catch (e) {}
   }
+  // Global Privacy Control (navigator.globalPrivacyControl): the browser asks not to share or sell
+  // data for advertising. "Accept all" and outside-region acceptance then leave marketing off;
+  // the visitor can still switch it on explicitly (preferences, "Allow and show"). respectGpc: false opts out.
+  function gpc() { try { return cfg.respectGpc !== false && navigator.globalPrivacyControl === true; } catch (e) { return false; } }
+  function acceptAll() { var g = gpc(); return pick(function (k) { return !(g && k === 'marketing'); }); }
   function act(a) {
-    if (a === 'accept') decide(pick(function () { return true; }), 'accept_all');
+    if (a === 'accept') decide(acceptAll(), 'accept_all');
     else if (a === 'reject') decide(pick(function () { return false; }), 'reject_all');
     else if (a === 'save') decide(pick(function (k) { return draft[k]; }), 'custom');
     else if (a === 'prefs') render('prefs');
@@ -654,7 +661,7 @@
     stored = null; draft = { necessary: true };
     embeds({});
     if (!inRegion()) {
-      apply(pick(function () { return true; }), 'outside_region');
+      apply(acceptAll(), 'outside_region');
       emit('skip', { country: cfg.geo.country });
       return;
     }
