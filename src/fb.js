@@ -73,6 +73,10 @@
     if (r.template) {
       cfg = assign({}, DEF, TPL[r.template] || TPL.frost, r,
         { site: cfg.site, endpoint: cfg.endpoint, container: cfg.container, texts: r.texts || {} });
+      // Integration options set on the page stay in force unless the dashboard sends its own value.
+      ['reloadOnWithdraw', 'respectGpc', 'consentVersion', 'consentMode'].forEach(function (k) {
+        if (r[k] === undefined && user[k] !== undefined) cfg[k] = user[k];
+      });
       if (!cfg.policyUrl) cfg.policyUrl = '#';
     }
     cfg.geo = assign({}, cfg.geo || {}, { country: (r.geo && r.geo.country) || null });
@@ -88,7 +92,7 @@
   var L = {}, mem = null, stored = null, state = null, draft = { necessary: true };
   // For integrations (GTM template): 'pending' until start() ran, 'shown' while the banner waits
   // for a choice, 'decided' once a choice is applied; source = source of the last applied choice.
-  var status = 'pending', source = null;
+  var status = 'pending', source = null, started = false;
   var host, root, view = 'main', mode = null, typed = false, preview = false;
 
   function assign(t) {
@@ -377,7 +381,9 @@
     // Scripts that already ran cannot be unloaded: if the visitor withdraws a category whose
     // scripts ran on this page, the page is reloaded so they stop (reloadOnWithdraw: false to opt out).
     var gone = Object.keys(ran).filter(function (k) { return !c[k]; });
-    stored = { v: cfg.version, cv: consentVersion(), k: catKey(), id: (stored && stored.id) || uid(), ts: Date.now(), c: c };
+    // Keep the visitor's consent ID, also for a choice made before start() (stored not read yet).
+    var prev = stored || readStore();
+    stored = { v: cfg.version, cv: consentVersion(), k: catKey(), id: (prev && typeof prev.id === 'string' && prev.id) || uid(), ts: Date.now(), c: c };
     writeStore(stored);
     apply(c, action);
     log(stored, action);   // sendBeacon survives the reload
@@ -533,7 +539,7 @@
       try { box = d.querySelector(cfg.container); } catch (e) {}
       if (!box) { warn('container "' + cfg.container + '" not found, the banner is shown on the page'); cfg.container = null; }
     }
-    (box || d.body).appendChild(host);
+    (box || d.body || d.documentElement).appendChild(host);   // open() from <head>: no <body> yet
     root.addEventListener('click', function (e) {
       var b = e.target.closest && e.target.closest('[data-a]');
       if (b) act(b.getAttribute('data-a'));
@@ -573,6 +579,7 @@
   function render(v) {
     if (v === null) return showFab();
     mount(); mode = 'banner'; view = v;
+    if (status === 'pending') status = 'shown';   // open()/show() before start(): the banner is on screen
     var t = tx(), lay = layout();
     var h = '<div class="card in ' + (v === 'main' ? 'm' : 'p') + '" role="dialog" aria-modal="' + (lay === 'center') + '" aria-labelledby="fbt" aria-describedby="fbd">';
     var pol = ' <a href="' + esc(safeUrl(cfg.policyUrl)) + '" target="_blank" rel="noopener">' + esc(t.policy) + '</a>';
@@ -684,12 +691,28 @@
   }
 
   function start() {
+    started = true;
     watch();
+    // A choice made before start() (FrostBanner.open() + Save while the page was still loading or
+    // the settings request was pending) stays in force if it is still valid for the final settings:
+    // no second 'change' event; only the content parsed since then gets the same rules.
+    if (state && valid(stored)) { unblock(state); embeds(state); showFab(); return; }
     stored = readStore();
     if (valid(stored)) {
       draft = assign({}, stored.c); apply(stored.c, 'restore'); showFab(); return;
     }
-    stored = null; draft = { necessary: true };
+    // No valid choice (none yet, or one made before the final settings changed the categories:
+    // that one is withdrawn again — Consent Mode back to denied, cookies of its categories removed).
+    if (state) {
+      gcm('update', {}); purge({});
+      // Scripts it already ran cannot be unloaded: reload, as on any withdrawal (no loop: the
+      // stored record is invalid for these settings, so the reloaded page just shows the banner).
+      if (Object.keys(ran).length && cfg.reloadOnWithdraw !== false && !cfg.container && !preview) {
+        emit('reload', { categories: Object.keys(ran) });
+        try { location.reload(); } catch (e) {}
+      }
+    }
+    stored = null; draft = { necessary: true }; state = null; source = null;
     embeds({});
     if (!inRegion()) {
       apply(acceptAll(), 'outside_region');
@@ -759,7 +782,7 @@
       d.querySelectorAll('script[data-fb-run]').forEach(function (s) { s.removeAttribute('data-fb-run'); });
       gcm('update', {});
       if (host) { host.remove(); host = root = null; mode = null; }
-      start();
+      if (started) start();   // before the first start() (settings still loading), boot() starts it once
     }
   };
 })(window, document);

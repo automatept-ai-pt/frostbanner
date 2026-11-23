@@ -61,6 +61,19 @@
         c: { template: 'frost', plan: 'pro', lang: 'en', categories: ['necessary', 'analytics', 'marketing', 'functional'], geo: {} } }));
     } catch (e) {}
   }
+  // ?slowcfg=1: the dashboard settings request takes 1.5 s (time to act before start() runs)
+  // ?slowcfg=2: same delay, and the "dashboard" answers with other categories (necessary + analytics only)
+  if (/^[12]$/.test(q.get('slowcfg') || '') && window.fetch) {
+    var realFetch = window.fetch, other = q.get('slowcfg') === '2';
+    window.fetch = function (u) {
+      var a = arguments;
+      if (!/\/v1\/config\//.test(String(u))) return realFetch.apply(window, a);
+      return new Promise(function (r) { setTimeout(r, 1500); }).then(function () {
+        return other ? new Response(JSON.stringify({ template: 'frost', plan: 'pro', lang: 'en', categories: ['necessary', 'analytics'], geo: {} }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }) : realFetch.apply(window, a);
+      });
+    };
+  }
   // getStatus()/getSource() at the moment the script's onload fires
   window.recordOnload = function () {
     window.atOnload = { status: FrostBanner.getStatus ? FrostBanner.getStatus() : 'no getStatus', source: FrostBanner.getSource ? FrostBanner.getSource() : 'no getSource' };
@@ -644,7 +657,7 @@ if (!FB_LOCAL) {
       group('13. Public API');
       p = await open({}, '13. configure({ template: "midnight", accent: "#e0a33a" }): dark banner with orange buttons');
       var api = p.W.FrostBanner;
-      check('API methods documented in the README exist', 'open, show, configure, getConsent, on, reset, templates, languages, version',
+      check('API methods documented in the README exist', 'open, show, configure, getConsent, getStatus, getSource, on, reset, templates, languages, version',
         ['open', 'show', 'configure', 'getConsent', 'getStatus', 'getSource', 'on', 'reset'].filter(function (m) { return typeof api[m] !== 'function'; }).concat(
           Array.isArray(api.templates) && api.templates.length === 14 ? [] : ['templates']).concat(typeof api.version === 'string' ? [] : ['version']),
         ['open', 'show', 'configure', 'getConsent', 'getStatus', 'getSource', 'on', 'reset'].every(function (m) { return typeof api[m] === 'function'; }) &&
@@ -818,7 +831,8 @@ if (!FB_LOCAL) {
       var st = function (pp) { return { status: pp.W.FrostBanner.getStatus(), source: pp.W.FrostBanner.getSource(), consent: !!pp.W.FrostBanner.getConsent() }; };
       var waitLoaded = function (pp) { return waitFor(function () { return !!pp.W.atOnload; }, 5000); };
       // parser-inserted tag in <head>: start() waits for DOMContentLoaded
-      p = await open({});
+      // (reloadOnWithdraw off: "Reject all" after "Accept all" would otherwise reload this page)
+      p = await open({ cfg: JSON.stringify({ reloadOnWithdraw: false }) });
       check('script in <head>: "pending" at onload (start() waits for the DOM)', 'pending, source null', p.W.atOnload,
         !!p.W.atOnload && p.W.atOnload.status === 'pending' && p.W.atOnload.source === null);
       check('then "shown" with the banner, no consent, source null', 'shown, null, no consent', st(p),
@@ -857,13 +871,79 @@ if (!FB_LOCAL) {
         st(p).status === 'decided' && st(p).source === 'outside_region' && st(p).consent);
       p.done();
       // no cached settings: start() waits for the settings request, so onload sees "pending"
-      p = await open({ dyn: '1', cfg: JSON.stringify({ site: 'rc-nocache-' + Date.now() }) }); await waitLoaded(p);
+      var ncSite = 'rc-nocache-' + Date.now();
+      p = await open({ dyn: '1', cfg: JSON.stringify({ site: ncSite }) }); await waitLoaded(p);
       var pendAtOnload = p.W.atOnload;
       await waitFor(function () { return p.W.FrostBanner.getStatus() !== 'pending'; }, 5000);
       check('no cached settings: "pending" at onload, "shown" after the settings request', 'pending, then shown',
         { atOnload: pendAtOnload && pendAtOnload.status, later: p.W.FrostBanner.getStatus() },
         !!pendAtOnload && pendAtOnload.status === 'pending' && p.W.FrostBanner.getStatus() === 'shown');
       p.done();
+      // a choice made before start() (settings request pending): kept, no second change event, consistent state
+      ncSite = 'rc-early-' + Date.now();
+      p = await open({ dyn: '1', slowcfg: '1', cfg: JSON.stringify({ site: ncSite }) }); await waitLoaded(p);
+      var stillPending = p.W.FrostBanner.getStatus();
+      var earlyChanges = [];
+      p.W.FrostBanner.on('change', function (x) { earlyChanges.push(x.source); });
+      p.W.FrostBanner.open();
+      var openedPending = p.W.FrostBanner.getStatus();
+      p.sr().querySelector('input[data-c="analytics"]').click(); p.sr().querySelector('button[data-a="save"]').click();
+      await waitFor(function () { return p.W.order.indexOf('lib') > -1; }, 5000);
+      await tick(1200);   // the settings request finishes and start() runs
+      check('open() before start(): "shown" while the preferences are on screen', 'pending before open(), then shown',
+        { before: stillPending, afterOpen: openedPending }, stillPending === 'pending' && openedPending === 'shown');
+      check('choice before start(): stays decided / custom after start(), one change event, consent kept', 'decided, custom, [custom]',
+        { status: p.W.FrostBanner.getStatus(), source: p.W.FrostBanner.getSource(), changes: earlyChanges, consent: !!p.W.FrostBanner.getConsent() },
+        p.W.FrostBanner.getStatus() === 'decided' && p.W.FrostBanner.getSource() === 'custom' && earlyChanges.join() === 'custom' && !!p.W.FrostBanner.getConsent());
+      p.done();
+      // a choice made before start() that the final settings no longer accept (categories changed): withdrawn
+      async function earlyThenChanged(extra) {
+        var site = 'rc-changed-' + Date.now();
+        var pp = await open({ dyn: '1', slowcfg: '2', cfg: JSON.stringify(assignTo({ site: site }, extra || {})) }); await waitLoaded(pp);
+        pp.W.FrostBanner.open();
+        pp.sr().querySelector('input[data-c="analytics"]').click(); pp.sr().querySelector('button[data-a="save"]').click();
+        await waitFor(function () { return pp.W.order.indexOf('lib') > -1; }, 5000);
+        var idBefore = JSON.parse(pp.W.localStorage.getItem('fb_consent') || '{}').id;
+        pp.W.__beforeStart = true;
+        var reloadEvt = false; pp.W.addEventListener('frostbanner:reload', function () { reloadEvt = true; });
+        await tick(2000);   // settings arrive, start() runs
+        await waitFor(function () { var Wn = pp.f.contentWindow; return Wn && Wn.FrostBanner && Wn.document.readyState === 'complete' && Wn.FrostBanner.getStatus() !== 'pending'; }, 8000);
+        var Wn = pp.f.contentWindow;
+        var denied = Array.prototype.filter.call(Wn.dataLayer || [], function (e) { return e[0] === 'consent' && e[1] === 'update'; }).map(function (e) { return e[2].analytics_storage; });
+        return { pp: pp, reloaded: !Wn.__beforeStart, reloadEvt: reloadEvt, status: Wn.FrostBanner.getStatus(), source: Wn.FrostBanner.getSource(),
+          consent: Wn.FrostBanner.getConsent(), lastUpdate: denied[denied.length - 1], idBefore: idBefore };
+      }
+      var assignTo = function (a, b) { for (var k in b) a[k] = b[k]; return a; };
+      var ec = await earlyThenChanged();
+      check('choice before start(), categories changed by the final settings: withdrawn, page reloaded, banner asks again', 'reload, shown, null, no consent',
+        { reloaded: ec.reloaded, event: ec.reloadEvt, status: ec.status, source: ec.source, consent: ec.consent },
+        ec.reloaded && ec.reloadEvt && ec.status === 'shown' && ec.source === null && ec.consent === null);
+      ec.pp.done();
+      ec = await earlyThenChanged({ reloadOnWithdraw: false });
+      check('same with reloadOnWithdraw: false: no reload, banner asks again, Consent Mode back to denied', 'no reload, shown, null, analytics denied',
+        { reloaded: ec.reloaded, status: ec.status, source: ec.source, consent: ec.consent, lastUpdate: ec.lastUpdate },
+        !ec.reloaded && ec.status === 'shown' && ec.source === null && ec.consent === null && ec.lastUpdate === 'denied');
+      ec.pp.done();
+      // the visitor's consent ID is kept for a choice made before start()
+      p = await open({ dyn: '1', slowcfg: '1', age: 10, cfg: JSON.stringify({ site: 'rc-id-' + Date.now() }) }); await waitLoaded(p);
+      var oldId = JSON.parse(p.W.localStorage.getItem('fb_consent') || '{}').id;
+      p.W.FrostBanner.open(); p.sr().querySelector('button[data-a="reject"]').click();
+      var newId = JSON.parse(p.W.localStorage.getItem('fb_consent') || '{}').id;
+      check('choice before start() keeps the stored consent ID', 'same id', { before: oldId, after: newId }, !!oldId && oldId === newId);
+      p.done();
+      // reset() before start(): start() runs once (no second banner)
+      var ncSite2 = 'rc-reset-' + Date.now();
+      p = await open({ dyn: '1', slowcfg: '1', cfg: JSON.stringify({ site: ncSite2 }) }); await waitLoaded(p);
+      var shownCount = 0; p.W.addEventListener('frostbanner:shown', function () { shownCount++; });
+      p.W.FrostBanner.reset();
+      await waitFor(function () { return p.W.FrostBanner.getStatus() !== 'pending'; }, 5000); await tick(300);
+      check('reset() before start(): start() runs once', '1 shown event, status shown', { shown: shownCount, status: p.W.FrostBanner.getStatus() },
+        shownCount === 1 && p.W.FrostBanner.getStatus() === 'shown');
+      p.done();
+      // the settings cache written by these checks is removed again
+      try { ['rc-nocache-', 'rc-early-', 'rc-reset-', 'rc-changed-', 'rc-id-'].forEach(function (pre) {
+        Object.keys(localStorage).forEach(function (k) { if (k.indexOf('fb_cfg_' + pre) === 0) localStorage.removeItem(k); });
+      }); } catch (e) {}
     } catch (e) {
       check('17. getStatus/getSource: group stopped by an exception', 'no exception', String(e && e.message || e), false);
     }

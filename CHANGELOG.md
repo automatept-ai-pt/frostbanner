@@ -31,6 +31,8 @@ All notable changes to the FrostBanner widget. The format follows [Keep a Change
 - Placeholders of iframes that are moved, replaced or removed are kept in sync.
 - The script queue no longer stops on scripts the browser never loads (`nomodule`, non-JavaScript types).
 - With Global Privacy Control, "Accept all" no longer switches off Marketing that the visitor had turned on.
+- Integration options set on the page (`reloadOnWithdraw`, `respectGpc`, `consentVersion`, `consentMode`) are kept when dashboard settings arrive, unless the dashboard sends its own value.
+- A choice made before FrostBanner has started (preferences opened from the page while it loads) keeps the visitor's consent ID and stays in force if it fits the final settings; otherwise it is withdrawn and the banner asks again.
 
 ### Security
 - Configuration values that end up in the banner's HTML and CSS (accent colour, category keys, policy link) are validated more strictly.
