@@ -81,7 +81,7 @@ FrostBanner sends the Consent Mode default (everything denied except `security_s
 </script>
 ```
 
-Use `region` only if that is really what you want: outside the listed regions Google tags start with consent granted.
+**Be careful with `region`.** Outside the listed regions Google tags start with consent granted and may set cookies before the visitor chooses — that includes EU visitors whose country you did not list. Use it only to exclude regions where consent is not required, and list every region where it is. (With Global Privacy Control the advertising keys still start denied.)
 
 ## JavaScript API
 

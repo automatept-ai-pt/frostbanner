@@ -28,10 +28,12 @@ All notable changes to the FrostBanner widget. The format follows [Keep a Change
 - An invalid `maxAgeDays`, `texts` or `container` value no longer breaks the banner.
 - Placeholders of iframes that are moved, replaced or removed are kept in sync.
 - The script queue no longer stops on scripts the browser never loads (`nomodule`, non-JavaScript types).
+- With Global Privacy Control, "Accept all" no longer switches off Marketing that the visitor had turned on.
 
 ### Security
 - Configuration values that end up in the banner's HTML and CSS (accent colour, category keys, policy link) are validated more strictly.
 - Policy links and embed addresses accept only `http(s)` and relative URLs.
+- A category counts as accepted only when the visitor accepted it: category names that match built-in JavaScript object properties are no longer treated as accepted.
 
 ## [0.4.2] - 2026-11-04
 

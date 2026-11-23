@@ -178,6 +178,31 @@ if (!FB_LOCAL) {
   async function run() {
     var p, v;
 
+    // helper used by groups 5 and 15: accept analytics, let its scripts run, then withdraw it
+    async function withdrawAnalytics(cfgExtra) {
+      var pp = await open(cfgExtra ? { cfg: JSON.stringify(cfgExtra) } : {});
+      acceptAnalyticsOnly(pp);
+      await waitFor(function () { return pp.W.order.indexOf('lib') > -1; });
+      pp.W.__beforeWithdraw = true;
+      var reloadEvt = false;
+      pp.W.addEventListener('frostbanner:reload', function () { reloadEvt = true; });
+      pp.W.FrostBanner.open();
+      pp.sr().querySelector('input[data-c="analytics"]').click();   // switch analytics off
+      pp.sr().querySelector('button[data-a="save"]').click();
+      await tick(300);
+      // a reload may still be in progress: wait until the (new) page has the widget again
+      await waitFor(function () {
+        var Wn = pp.f.contentWindow;
+        return Wn && Wn.FrostBanner && Wn.document.readyState === 'complete' && (!reloadEvt || !Wn.__beforeWithdraw);
+      }, 8000);
+      await tick(200);
+      var W2 = pp.f.contentWindow, c2 = W2.FrostBanner.getConsent();
+      return { pp: pp, reloaded: !W2.__beforeWithdraw, reloadEvt: reloadEvt, analytics: c2 && c2.analytics,
+        banner: !!(W2.document.getElementById('frostbanner') && W2.document.getElementById('frostbanner').shadowRoot.querySelector('.card')),
+        ranAfter: W2.order ? W2.order.indexOf('lib') > -1 : null };
+    }
+
+
     try {
       // ---------- 1. consent expiry ----------
       group('1. Consent expiry (maxAgeDays = 180, record in localStorage only)');
@@ -402,22 +427,6 @@ if (!FB_LOCAL) {
       p.done();
 
       // withdrawal: a category whose scripts already ran -> page reload (unless reloadOnWithdraw: false)
-      async function withdrawAnalytics(cfgExtra) {
-        var pp = await open(cfgExtra ? { cfg: JSON.stringify(cfgExtra) } : {});
-        acceptAnalyticsOnly(pp);
-        await waitFor(function () { return pp.W.order.indexOf('lib') > -1; });
-        pp.W.__beforeWithdraw = true;
-        var reloadEvt = false;
-        pp.W.addEventListener('frostbanner:reload', function () { reloadEvt = true; });
-        pp.W.FrostBanner.open();
-        pp.sr().querySelector('input[data-c="analytics"]').click();   // switch analytics off
-        pp.sr().querySelector('button[data-a="save"]').click();
-        await tick(800);
-        var W2 = pp.f.contentWindow, c2 = W2.FrostBanner.getConsent();
-        return { pp: pp, reloaded: !W2.__beforeWithdraw, reloadEvt: reloadEvt, analytics: c2 && c2.analytics,
-          banner: !!(W2.document.getElementById('frostbanner') && W2.document.getElementById('frostbanner').shadowRoot.querySelector('.card')),
-          ranAfter: W2.order ? W2.order.indexOf('lib') > -1 : null };
-      }
       var wd = await withdrawAnalytics();
       check('withdrawing analytics after its scripts ran reloads the page', 'reloaded, analytics off, no banner, scripts not run again',
         { reloaded: wd.reloaded, event: wd.reloadEvt, analytics: wd.analytics, banner: wd.banner, ranAfter: wd.ranAfter },
@@ -656,6 +665,85 @@ if (!FB_LOCAL) {
       check('GPC with respectGpc: false: "Accept all" includes marketing', 'marketing on', g4, g4.marketing === true && !g4.gpc);
     } catch (e) {
       check('14. Global Privacy Control: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
+    // ---------- 15. findings of the independent review of 0.5.0 ----------
+    try {
+      group('15. Review findings (0.5.0)');
+      // malformed category entries with an embed on the page: placeholder and preferences still work
+      for (const bad of [[], [5], [null, 'x']]) {
+        p = await open({ cfg: JSON.stringify({ texts: { en: { c: { marketing: bad } } } }) });
+        p.D.getElementById('spa').className = '';
+        p.D.getElementById('spa').appendChild(frame.call(null, 'marketing', 'bx'));
+        await tick(200);
+        var phEl = p.D.querySelector('[data-fb-ph]');
+        p.W.FrostBanner.open();
+        var prefsTxt = p.sr().querySelector('.card').textContent;
+        check('texts c.marketing = ' + JSON.stringify(bad) + ': placeholder and preferences render, no "undefined"', 'placeholder with "marketing", banner OK',
+          { placeholder: phEl ? phEl.textContent.slice(0, 60) : null, undef: /undefined/.test(prefsTxt + (phEl ? phEl.textContent : '')) },
+          !!phEl && /marketing/i.test(phEl.textContent) && !/undefined/.test(prefsTxt + phEl.textContent));
+        p.done();
+      }
+      // GPC + consentMode.region: the global (granted) default keeps the ad keys denied
+      p = await open({ gpc: '1', cfg: JSON.stringify({ consentMode: { region: ['ES'] } }) });
+      defs = dl(p, 'consent', 'default');
+      check('GPC + region: global default keeps ad keys denied', 'ad_storage denied, analytics granted',
+        defs[0], defs.length === 2 && defs[0].ad_storage === 'denied' && defs[0].ad_user_data === 'denied' && defs[0].analytics_storage === 'granted');
+      p.done();
+      // GPC: "Accept all" never withdraws marketing the visitor switched on
+      p = await open({ gpc: '1' });
+      p.W.FrostBanner.open(); p.sr().querySelector('input[data-c="marketing"]').click(); p.sr().querySelector('button[data-a="save"]').click();
+      p.W.FrostBanner.open(); p.sr().querySelector('button[data-a="accept"]').click();
+      var cc3 = p.W.FrostBanner.getConsent();
+      check('GPC: "Accept all" keeps marketing that was switched on', 'marketing on', { marketing: cc3 && cc3.marketing }, cc3 && cc3.marketing === true);
+      p.done();
+      // outside the region: Escape in preferences opened by the site closes to the floating button
+      p = await open({ cfg: JSON.stringify({ geo: { mode: 'eu', country: 'US' } }) });
+      p.W.FrostBanner.open(); await tick(50); key(p, 'Escape'); await tick(50);
+      check('outside the region: Escape in preferences shows the floating button, not the banner', 'fab, no main banner',
+        { fab: !!p.sr().querySelector('.fab'), main: !!p.sr().querySelector('.card.m') }, !!p.sr().querySelector('.fab') && !p.sr().querySelector('.card.m'));
+      p.done();
+      // editor preview with a missing container never reloads
+      wd = await withdrawAnalytics({ container: '#missing-preview-box' });
+      check('preview with a missing container: withdrawal does not reload', 'not reloaded', { reloaded: wd.reloaded, analytics: wd.analytics }, !wd.reloaded && wd.analytics === false);
+      wd.pp.done();
+      // a data block (application/ld+json) of a withdrawn category does not trigger a reload
+      p = await open({});
+      var js = p.D.createElement('script'); js.type = 'text/plain'; js.setAttribute('data-category', 'functional'); js.setAttribute('data-type', 'application/ld+json'); js.text = '{}';
+      p.D.getElementById('spa').appendChild(js);
+      p.W.FrostBanner.open(); p.sr().querySelector('input[data-c="functional"]').click(); p.sr().querySelector('button[data-a="save"]').click();
+      await tick(200);
+      p.W.__beforeWithdraw = true;
+      p.W.FrostBanner.open(); p.sr().querySelector('input[data-c="functional"]').click(); p.sr().querySelector('button[data-a="save"]').click();
+      await tick(800);
+      check('withdrawing a category with only a JSON data block does not reload', 'not reloaded', { reloaded: !p.f.contentWindow.__beforeWithdraw }, !!p.f.contentWindow.__beforeWithdraw);
+      p.done();
+      // categories named like Object.prototype members are not granted by accident
+      p = await open({ cfg: JSON.stringify({ categories: ['necessary', 'analytics', 'constructor', 'tostring'] }) });
+      var sp = p.D.getElementById('spa'); sp.className = '';
+      ['constructor', 'toString', 'hasOwnProperty'].forEach(function (cat) {
+        var s = p.D.createElement('script'); s.type = 'text/plain'; s.setAttribute('data-category', cat); s.text = "order.push('PROTO " + cat + " RAN')"; sp.appendChild(s);
+      });
+      sp.appendChild(frame('constructor', 'protoFrame'));
+      acceptAnalyticsOnly(p);
+      await tick(300);
+      var protoRan = p.W.order.filter(function (x) { return /^PROTO/.test(x); });
+      var pf = p.D.getElementById('protoFrame');
+      check('data-category "constructor" / "toString" / "hasOwnProperty": nothing runs or loads without consent', 'no PROTO scripts, iframe not loaded',
+        { ran: protoRan, iframeSrc: pf.getAttribute('src') }, protoRan.length === 0 && !pf.hasAttribute('src'));
+      p.done();
+      // "constructor" is not a category name; "$&" in a custom name is shown literally
+      p = await open({ cfg: JSON.stringify({ categories: ['necessary', 'analytics', 'marketing', 'functional', 'constructor'], texts: { en: { c: { marketing: ['Ads $& more', 'd'] } } } }) });
+      p.D.getElementById('spa').className = '';
+      p.D.getElementById('spa').appendChild(frame('constructor', 'ctor'));
+      p.D.getElementById('spa').appendChild(frame('marketing', 'dollar'));
+      await tick(200);
+      var phs2 = Array.prototype.map.call(p.D.querySelectorAll('[data-fb-ph] p'), function (x) { return x.textContent; });
+      check('placeholder text: no "undefined" for category "constructor", "$&" kept literally', 'no undefined, contains "$&"',
+        phs2, phs2.length === 2 && !phs2.some(function (s) { return /undefined/.test(s); }) && phs2.some(function (s) { return s.indexOf('$&') > -1; }));
+      p.done();
+    } catch (e) {
+      check('15. review findings: group stopped by an exception', 'no exception', String(e && e.message || e), false);
     }
 
     // ---------- summary ----------

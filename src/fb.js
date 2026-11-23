@@ -86,7 +86,7 @@
   }
 
   var L = {}, mem = null, stored = null, state = null, draft = { necessary: true };
-  var host, root, view = 'main', mode = null, typed = false;
+  var host, root, view = 'main', mode = null, typed = false, preview = false;
 
   function assign(t) {
     for (var i = 1; i < arguments.length; i++) { var s = arguments[i]; for (var k in s) if (Object.prototype.hasOwnProperty.call(s, k)) t[k] = s[k]; }
@@ -122,6 +122,9 @@
     return v && (!scheme || /^https?$/i.test(scheme[1])) ? v : null;
   }
   function safeUrl(u) { return cleanUrl(u) || '#'; }
+  // Is category k granted in choices c? Own boolean true only: c["constructor"], c["toString"]…
+  // come from Object.prototype and must not count as consent.
+  function granted(c, k) { return !!c && Object.prototype.hasOwnProperty.call(c, k) && c[k] === true; }
   function each(fn) { cats().forEach(fn); }
   function pick(fn) { var o = {}; each(function (k) { o[k] = k === 'necessary' ? true : !!fn(k); }); return o; }
   // Default long text names only the categories actually in use (e.g. no "personalise ads" if Marketing is off).
@@ -181,7 +184,7 @@
       if (reg.length) {
         // Denied by default only in these regions (Google uses the most specific default);
         // everywhere else the tags start granted. The owner's choice: off unless configured.
-        var all = gcmState(pick(function () { return true; }));
+        var all = gcmState(acceptAll());   // with Global Privacy Control the ad keys stay denied
         all.security_storage = 'granted';
         w.gtag('consent', 'default', all);
         o.region = reg;
@@ -204,7 +207,7 @@
     var n = d.querySelectorAll('script[type="text/plain"][data-category]');
     for (var i = 0; i < n.length; i++) {
       var o = n[i];
-      if (!c[o.getAttribute('data-category')] || o.hasAttribute('data-fb-run')) continue;
+      if (!granted(c, o.getAttribute('data-category')) || o.hasAttribute('data-fb-run')) continue;
       o.setAttribute('data-fb-run', '');
       runQ.push(o);
     }
@@ -256,7 +259,8 @@
     }
     if (!ext) s.text = o.text;
     o.parentNode.insertBefore(s, o.nextSibling);
-    ran[cat] = true;
+    // Data blocks (application/ld+json, …) and nomodule scripts never run: no reload for them.
+    if (isJs(s.type) && !o.hasAttribute('nomodule')) ran[cat] = true;
     emit('script', { category: cat, name: o.getAttribute('data-name') || o.src || 'inline script' });
   }
 
@@ -279,7 +283,7 @@
       // the iframe being moved or another element being inserted between them.
       var f = n[i], cat = f.getAttribute('data-category'), ph = f._fbPh;
       var has = !!(ph && ph.parentNode && ph.isConnected !== false);
-      if (c && c[cat]) {
+      if (granted(c, cat)) {
         var src = cleanUrl(f.getAttribute('data-src'));          // no javascript:/data: iframes
         if (src && f.getAttribute('src') !== src) {
           f.setAttribute('src', src);
@@ -295,7 +299,10 @@
       }
       if (f.hasAttribute('src')) f.removeAttribute('src');          // consent withdrawn: unload
       if (has) { if (ph.nextSibling !== f) f.parentNode.insertBefore(ph, f); continue; }   // keep it next to the iframe
-      var t = tx(), name = t.c && t.c[cat] ? t.c[cat][0] : cat;
+      // Own entries only ("constructor", "toString"… are not categories); function replacers so
+      // "$&"-like sequences in a name or host are inserted literally.
+      var t = tx(), own = Object.prototype.hasOwnProperty.call(t.c, cat) && Array.isArray(t.c[cat]);
+      var name = String(own ? t.c[cat][0] : cat);
       if (/\s\{cat\}[\s.]/.test(t.embed)) name = name.toLowerCase(); // lower-case only inside a sentence (en, pt); quoted names keep their case
       var acc = accent();
       var p = d.createElement('div');
@@ -307,7 +314,8 @@
         'min-height:' + (f.style.height || (/%$/.test(f.getAttribute('height') || '') ? '' : size(f.getAttribute('height'), 'px')) || '220px') + ';';
       var m = d.createElement('p');
       m.style.cssText = 'margin:0;max-width:34em';
-      m.textContent = t.embed.replace('{site}', hostOf(f.getAttribute('data-src')) || '?').replace('{cat}', name);
+      var site = hostOf(f.getAttribute('data-src')) || '?';
+      m.textContent = t.embed.replace('{site}', function () { return site; }).replace('{cat}', function () { return name; });
       var b = d.createElement('button');
       b.type = 'button'; b.textContent = t.embedBtn;
       b.style.cssText = 'cursor:pointer;border:0;border-radius:8px;padding:10px 18px;font:600 14px/1.2 system-ui,-apple-system,sans-serif;color:#fff;background:' + acc;
@@ -333,7 +341,7 @@
     try { d.cookie.split(/;\s*/).forEach(function (x) { if (x) names.push(x.split('=')[0]); }); } catch (e) { return; }
     for (var i = 0; i < parts.length - 1; i++) doms.push(';domain=.' + parts.slice(i).join('.'));
     for (var cat in PURGE) {
-      if (c[cat]) continue;
+      if (granted(c, cat)) continue;
       names.forEach(function (n) {
         if (!PURGE[cat].some(function (re) { return re.test(n); })) return;
         doms.forEach(function (dm) { try { d.cookie = n + '=;path=/;max-age=0' + dm; } catch (e) {} });
@@ -362,7 +370,7 @@
     var hadFocus = !!(root && root.activeElement);
     showFab();
     if (hadFocus) focusIn('.fab');
-    if (gone.length && cfg.reloadOnWithdraw !== false && !cfg.container) {
+    if (gone.length && cfg.reloadOnWithdraw !== false && !cfg.container && !preview) {
       emit('reload', { categories: gone });
       try { location.reload(); } catch (e) {}
     }
@@ -394,11 +402,12 @@
   // data for advertising. "Accept all" and outside-region acceptance then leave marketing off;
   // the visitor can still switch it on explicitly (preferences, "Allow and show"). respectGpc: false opts out.
   function gpc() { try { return cfg.respectGpc !== false && navigator.globalPrivacyControl === true; } catch (e) { return false; } }
-  function acceptAll() { var g = gpc(); return pick(function (k) { return !(g && k === 'marketing'); }); }
+  // Marketing already switched on by the visitor stays on: "Accept all" must never withdraw it.
+  function acceptAll() { var g = gpc(); return pick(function (k) { return !(g && k === 'marketing') || !!(state && state.marketing); }); }
   function act(a) {
     if (a === 'accept') decide(acceptAll(), 'accept_all');
     else if (a === 'reject') decide(pick(function () { return false; }), 'reject_all');
-    else if (a === 'save') decide(pick(function (k) { return draft[k]; }), 'custom');
+    else if (a === 'save') decide(pick(function (k) { return granted(draft, k); }), 'custom');
     else if (a === 'prefs') render('prefs');
     else if (a === 'fab') render('prefs');
   }
@@ -420,7 +429,11 @@
     // switches of the others; an entry is used only if it is [name, description].
     var oc = own && typeof own === 'object' ? own.c : null;
     t.c = assign({}, base.c);
-    if (oc && typeof oc === 'object') for (var ck in oc) if (Array.isArray(oc[ck])) t.c[ck] = oc[ck];
+    if (oc && typeof oc === 'object') for (var ck in oc) {
+      var e = oc[ck], bc = base.c[ck];
+      if (Array.isArray(e) && typeof e[0] === 'string' && e[0])
+        t.c[ck] = [e[0], typeof e[1] === 'string' ? e[1] : (bc ? bc[1] : '')];
+    }
     return t;
   }
   function css() {
@@ -499,6 +512,7 @@
     // for a container that is not there: both fall back to the page with a warning.
     var box = null;
     if (cfg.container) {
+      preview = true;   // an editor preview stays a preview (no reload) even if its container is missing
       try { box = d.querySelector(cfg.container); } catch (e) {}
       if (!box) { warn('container "' + cfg.container + '" not found, the banner is shown on the page'); cfg.container = null; }
     }
@@ -516,7 +530,7 @@
       // Escape leaves the preferences: back to the banner, or to the floating button if a choice
       // was already made. On the main banner it does nothing on purpose: a choice is required.
       if (e.key === 'Escape' && view === 'prefs') {
-        if (stored) { showFab(); focusIn('.fab'); } else { render('main'); focusIn('.card button'); }
+        if (state) { showFab(); focusIn('.fab'); } else { render('main'); focusIn('.card button'); }
         return;
       }
       // Modal window (centre layout, aria-modal="true"): Tab stays inside the card.
@@ -582,7 +596,7 @@
         var nec = k === 'necessary';
         h += '<label class="cat"><span><b>' + esc(c[0]) + '</b><small>' + esc(c[1]) + '</small></span>' +
           '<input type="checkbox" role="switch" class="sw" data-c="' + k + '"' +
-          (nec || draft[k] ? ' checked' : '') + (nec ? ' disabled title="' + esc(t.always) + '"' : '') + '></label>';
+          (nec || granted(draft, k) ? ' checked' : '') + (nec ? ' disabled title="' + esc(t.always) + '"' : '') + '></label>';
       });
       h += '</div><div class="btns"><button class="pri" data-a="reject">' + esc(t.reject) + '</button>' +
         '<button class="pri" data-a="save">' + esc(t.save) + '</button>' +
