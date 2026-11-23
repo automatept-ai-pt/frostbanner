@@ -961,6 +961,54 @@ if (!FB_LOCAL) {
       check('17. getStatus/getSource: group stopped by an exception', 'no exception', String(e && e.message || e), false);
     }
 
+    // ---------- 18. centre window: page behind is inert ----------
+    try {
+      group('18. Centre window: page behind is inert');
+      p = await open({ cfg: JSON.stringify({ layout: 'center' }) });
+      var Dm = p.D, hostM = Dm.getElementById('frostbanner'), spaM = Dm.getElementById('spa');
+      var bodyKids = Array.prototype.filter.call(Dm.body.children, function (el) { return el !== hostM && !/^(SCRIPT|STYLE|LINK|TEMPLATE)$/.test(el.tagName); });
+      check('centre window open: every other element of <body> is inert, the banner is not', 'all inert, host not',
+        { inert: bodyKids.filter(function (el) { return el.hasAttribute('inert'); }).length, of: bodyKids.length, hostInert: hostM.hasAttribute('inert') },
+        bodyKids.length > 0 && bodyKids.every(function (el) { return el.hasAttribute('inert'); }) && !hostM.hasAttribute('inert'));
+      spaM.className = '';
+      var pageBtn = Dm.createElement('button'); pageBtn.textContent = 'page button'; spaM.appendChild(pageBtn);
+      pageBtn.focus(); pageBtn.dispatchEvent(new p.W.MouseEvent('mousedown', { bubbles: true }));
+      check('a click/focus on the page behind does not take the focus', 'focus stays in the banner', Dm.activeElement && (Dm.activeElement.id || Dm.activeElement.tagName),
+        Dm.activeElement === hostM);
+      var lateBtn = Dm.createElement('button'); lateBtn.textContent = 'added later'; Dm.body.appendChild(lateBtn);
+      lateBtn.focus();
+      // Real focus events only fire in a focused window (always the case for a visitor, not always in
+      // an automated browser): send the focusin the browser would send.
+      if (Dm.activeElement === lateBtn) lateBtn.dispatchEvent(new p.W.FocusEvent('focusin', { bubbles: true, composed: true }));
+      await tick(20);
+      check('an element added to the page meanwhile cannot keep the focus either', 'focus back in the banner', Dm.activeElement && (Dm.activeElement.id || Dm.activeElement.tagName),
+        Dm.activeElement === hostM && !!p.sr().activeElement);
+      p.sr().querySelector('button[data-a="accept"]').click();
+      check('after the choice the page is no longer inert', 'no inert left', bodyKids.filter(function (el) { return el.hasAttribute('inert'); }).length,
+        bodyKids.every(function (el) { return !el.hasAttribute('inert'); }));
+      pageBtn.focus();
+      check('and the page can take the focus again', 'page button focused', Dm.activeElement && Dm.activeElement.textContent, Dm.activeElement === pageBtn);
+      p.done();
+      // an element the site made inert itself stays inert
+      p = await open({ cfg: JSON.stringify({ layout: 'center' }) });
+      Dm = p.D;
+      var own = Dm.getElementById('spa');
+      p.sr().querySelector('button[data-a="reject"]').click();               // close first
+      own.setAttribute('inert', '');                                            // the site's own inert
+      p.W.FrostBanner.show(); await tick(20);
+      p.sr().querySelector('button[data-a="reject"]').click();
+      check('an element the site made inert itself stays inert', 'still inert', own.hasAttribute('inert'), own.hasAttribute('inert'));
+      p.done();
+      p = await open({});
+      check('corner layout: nothing is made inert', '0 inert', p.D.querySelectorAll('[inert]').length, p.D.querySelectorAll('[inert]').length === 0);
+      p.done();
+      p = await open({ cfg: JSON.stringify({ layout: 'center', container: '#spa' }) });
+      check('centre layout in an editor preview (container): nothing is made inert', '0 inert', p.D.querySelectorAll('[inert]').length, p.D.querySelectorAll('[inert]').length === 0);
+      p.done();
+    } catch (e) {
+      check('18. inert: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');

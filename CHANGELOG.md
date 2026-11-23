@@ -21,6 +21,7 @@ All notable changes to the FrostBanner widget. The format follows [Keep a Change
 ### Changed
 - Blocked scripts run in page order after consent: an inline script waits for the external scripts above it (at most 15 seconds).
 - Keyboard: in the centred window Tab stays inside the banner; after a choice the focus moves to the floating button; Escape leaves the preferences.
+- Centred window: the page behind is made inert while it is open, so a mouse click cannot move the focus out of it either (elements the site made inert itself stay inert; not in editor previews).
 - Custom category texts are merged per category instead of replacing all of them.
 - The bundle is about 60 KB minified (about 23 KB compressed), up from about 55 KB. Built with terser 5.51.4.
 - Documentation: the README documents the whole JavaScript API, the Consent Mode options and the build; its screenshots are WebP and much lighter.

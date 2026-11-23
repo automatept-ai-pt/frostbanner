@@ -627,14 +627,36 @@
         '<button class="pri" data-a="accept">' + esc(t.accept) + '</button>' + brand + '</div>';
     }
     root.innerHTML = wrap(h + '</div>' + after, lay);
+    setModal(lay === 'center' && !cfg.container && !preview);
     if (typing) setTimeout(function () { typed = true; var c = root && root.querySelector('.typing'); if (c) c.classList.remove('typing'); }, 900);
     if (v === 'prefs' || lay === 'center') { var f = root.querySelector('.card button, .card input:not([disabled])'); if (f) f.focus({ preventScroll: true }); }
   }
   function showFab() {
-    mount(); mode = 'fab';
+    mount(); mode = 'fab'; setModal(false);
     var manage = esc(tx().manage);
     root.innerHTML = wrap('<button class="fab in" data-a="fab" aria-label="' + manage + '" title="' + manage + '">' +
       COOKIE + '</button>');
+  }
+  // Centre layout (aria-modal): the page behind is made inert, so neither Tab nor a mouse click
+  // can move the focus out of the window. Only elements FrostBanner made inert are restored; a
+  // focusin guard covers browsers without inert and elements added to the page meanwhile.
+  var modalOn = false, inerted = [];
+  function guard(e) { if (modalOn && host && e.target !== host && !host.contains(e.target)) focusIn('.card button'); }
+  function setModal(on) {
+    if (on === modalOn) return;
+    modalOn = on;
+    if (on) {
+      var kids = d.body ? d.body.children : [];
+      for (var i = 0; i < kids.length; i++) {
+        var el = kids[i];
+        if (el !== host && !el.hasAttribute('inert') && !/^(SCRIPT|STYLE|LINK|TEMPLATE)$/.test(el.tagName)) { el.setAttribute('inert', ''); inerted.push(el); }
+      }
+      d.addEventListener('focusin', guard, true);
+    } else {
+      inerted.forEach(function (el) { el.removeAttribute('inert'); });
+      inerted = [];
+      d.removeEventListener('focusin', guard, true);
+    }
   }
   function layout() { return /^(corner|bar|center|pill|chat|split)$/.test(cfg.layout) ? cfg.layout : 'corner'; }
   function isModal() { return layout() === 'center'; }
@@ -784,6 +806,7 @@
       d.querySelectorAll('script[data-fb-clone]').forEach(function (s) { s.remove(); });
       d.querySelectorAll('script[data-fb-run]').forEach(function (s) { s.removeAttribute('data-fb-run'); });
       gcm('update', {});
+      setModal(false);
       if (host) { host.remove(); host = root = null; mode = null; }
       if (started) start();   // before the first start() (settings still loading), boot() starts it once
     }
