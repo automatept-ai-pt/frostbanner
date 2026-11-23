@@ -88,7 +88,12 @@ Use `region` only if that is really what you want: outside the listed regions Go
 FrostBanner.open();          // open the preferences
 FrostBanner.getConsent();    // { necessary: true, analytics: false, ... } or null
 FrostBanner.on('change', function (e) { console.log(e.choices, e.source); });
-FrostBanner.reset();         // forget the choice (testing)
+FrostBanner.reset();         // forget the choice (testing; reload the page afterwards)
+FrostBanner.show();          // show the banner again (main view)
+FrostBanner.configure({ template: 'midnight', accent: '#e0a33a' }); // change settings and redraw (previews)
+FrostBanner.templates;       // names of the 14 built-in styles
+FrostBanner.languages;       // codes of the 29 built-in languages
+FrostBanner.version;         // e.g. "0.5.0"
 ```
 
 Events: `change`, `consentmode`, `script`, `embed`, `log`, `shown`, `skip`, `reload`. They are also dispatched on `window` as `frostbanner:<name>`.

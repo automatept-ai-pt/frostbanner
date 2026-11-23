@@ -541,11 +541,11 @@
     var typing = false;
     // On sites that use the WordPress.org plugin the credit stays plain text:
     // the plugin directory does not allow credit links without the owner's opt-in.
-    var viaWp = !!document.getElementById('frostbanner-js');
+    var viaWp = !!d.getElementById('frostbanner-js');
     var brand = !cfg.branding ? '' : viaWp ? '<div class="brand">Powered by FrostBanner</div>' :
       '<div class="brand"><a href="https://frostbanner.com/?utm_source=banner&amp;utm_medium=powered_by&amp;utm_campaign=free" target="_blank" rel="nofollow noopener">Powered by FrostBanner</a></div>', after = '';
     if (v === 'main' && lay === 'chat') {
-      var typing = !cfg.container && !typed && !(w.matchMedia && w.matchMedia('(prefers-reduced-motion: reduce)').matches);
+      typing = !cfg.container && !typed && !(w.matchMedia && w.matchMedia('(prefers-reduced-motion: reduce)').matches);
       if (typing) h = h.replace('class="card in m"', 'class="card in m typing"');
       h += '<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><p id="fbd"><b id="fbt">' + esc(t.title) + '</b>' + esc(t.text) + pol + '</p>' +
         '<div class="btns"><button class="pri" data-a="reject">' + esc(t.reject) + '</button>' +
@@ -587,7 +587,8 @@
   }
   function showFab() {
     mount(); mode = 'fab';
-    root.innerHTML = wrap('<button class="fab in" data-a="fab" aria-label="' + esc(tx().manage) + '" title="' + esc(tx().manage) + '">' +
+    var manage = esc(tx().manage);
+    root.innerHTML = wrap('<button class="fab in" data-a="fab" aria-label="' + manage + '" title="' + manage + '">' +
       COOKIE + '</button>');
   }
   function layout() { return /^(corner|bar|center|pill|chat|split)$/.test(cfg.layout) ? cfg.layout : 'corner'; }

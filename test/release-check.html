@@ -552,6 +552,35 @@ if (!FB_LOCAL) {
     check('README images are light (each under 150 KB)', 'all < 150 KB', imgRes.map(function (x) { return x.src + ' ' + x.kb + ' KB'; }),
       imgRes.length >= 3 && imgRes.every(function (x) { return x.kb !== null && x.kb < 150; }));
 
+    // ---------- 13. public API ----------
+    group('13. Public API');
+    p = await open({}, '13. configure({ template: "midnight", accent: "#e0a33a" }): dark banner with orange buttons');
+    var api = p.W.FrostBanner;
+    check('API methods documented in the README exist', 'open, show, configure, getConsent, on, reset, templates, languages, version',
+      ['open', 'show', 'configure', 'getConsent', 'on', 'reset'].filter(function (m) { return typeof api[m] !== 'function'; }).concat(
+        Array.isArray(api.templates) && api.templates.length === 14 ? [] : ['templates']).concat(typeof api.version === 'string' ? [] : ['version']),
+      ['open', 'show', 'configure', 'getConsent', 'on', 'reset'].every(function (m) { return typeof api[m] === 'function'; }) &&
+        Array.isArray(api.templates) && api.templates.length === 14 && typeof api.version === 'string');
+    api.configure({ template: 'midnight', accent: '#e0a33a' });
+    await tick(100);
+    var wcls = p.sr().querySelector('.w');
+    check('configure() redraws with the new template and accent', 'dark theme, accent #e0a33a',
+      { dark: wcls.classList.contains('dark'), accent: getComputedStyle(wcls).getPropertyValue('--a').trim() },
+      wcls.classList.contains('dark') && getComputedStyle(wcls).getPropertyValue('--a').trim() === '#e0a33a');
+    p.sr().querySelector('button[data-a="reject"]').click();
+    api.show(); await tick(100);
+    check('show() brings the banner back after a choice', 'main banner shown', { main: !!p.sr().querySelector('.card.m') }, !!p.sr().querySelector('.card.m'));
+    p = await open({ cfg: JSON.stringify({ layout: 'chat' }) });
+    check('chat layout renders (typing indicator code path)', 'banner card present', { card: !!p.card() }, !!p.card());
+    await tick(1000);
+    check('chat layout: typing indicator ends after ~0.9 s', 'no .typing', { typing: !!p.sr().querySelector('.typing') }, !p.sr().querySelector('.typing'));
+    p.sr().querySelector('button[data-a="accept"]').click();
+    var fab = p.sr().querySelector('.fab');
+    check('floating button has the "Cookie settings" label', 'aria-label = title = Cookie settings',
+      fab ? { label: fab.getAttribute('aria-label'), title: fab.getAttribute('title') } : 'no fab',
+      fab && fab.getAttribute('aria-label') === 'Cookie settings' && fab.getAttribute('title') === 'Cookie settings');
+    p.done();
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');
