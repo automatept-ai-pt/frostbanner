@@ -45,6 +45,9 @@
   }
   // ?gpc=1: the browser sends the Global Privacy Control signal
   if (q.get('gpc') === '1') { try { Object.defineProperty(navigator, 'globalPrivacyControl', { value: true, configurable: true }); } catch (e) {} }
+  // console warnings of the widget, for the checks
+  window.warns = [];
+  (function (w0) { console.warn = function () { warns.push(Array.prototype.join.call(arguments, ' ')); return w0.apply(console, arguments); }; })(console.warn);
   window.pwned = 0;
   window.order = [];
   window.fbEvents = [];
@@ -301,12 +304,12 @@ if (!FB_LOCAL) {
       }
 
       var c = { necessary: ['Necessary', 'n'], analytics: ['Analytics', 'a'] };
-      c[EVIL_KEY] = ['Evil', 'e']; c['Bad-Key'] = ['Bad', 'b'];
-      p = await open({ cfg: JSON.stringify({ categories: ['necessary', 'analytics', EVIL_KEY, 'Bad-Key', 42], texts: { en: { c: c } } }) });
+      c[EVIL_KEY] = ['Evil', 'e']; c['Bad Key'] = ['Bad', 'b'];
+      p = await open({ cfg: JSON.stringify({ categories: ['necessary', 'analytics', EVIL_KEY, 'Bad Key', 42], texts: { en: { c: c } } }) });
       p.W.FrostBanner.open(); await tick(100);
       var sw = Array.prototype.map.call(p.sr().querySelectorAll('[data-c]'), function (x) { return x.getAttribute('data-c'); });
       var injected = p.sr().querySelectorAll('[onfocus],[autofocus]').length;
-      check('category keys outside ^[a-z_]+$ are dropped', 'switches necessary,analytics; no injected attributes',
+      check('category keys that could break out of an attribute are dropped', 'switches necessary,analytics; no injected attributes',
         { switches: sw, injected: injected, pwned: p.W.pwned }, sw.join(',') === 'necessary,analytics' && injected === 0 && p.W.pwned === 0);
       p.done();
     } catch (e) {
@@ -555,6 +558,14 @@ if (!FB_LOCAL) {
           defs[1].ad_storage === 'denied' && JSON.stringify(defs[1].region) === '["ES","pt-PT"]' && defs[1].wait_for_update === 1500);
       check('adsDataRedaction / urlPassthrough are set', 'both true', { redaction: dl(p, 'set', 'ads_data_redaction'), passthrough: dl(p, 'set', 'url_passthrough') },
         dl(p, 'set', 'ads_data_redaction')[0] === true && dl(p, 'set', 'url_passthrough')[0] === true);
+      var regWarn = p.W.warns.filter(function (x) { return x.indexOf('consentMode.region') > -1; });
+      var notListed = regWarn[0] ? (regWarn[0].split('Not listed')[1] || '').split(' ') : [];
+      check('W2: region set -> console warning naming the EU/EEA countries not listed', 'warning; DE and PT (only a subregion pt-PT) not listed, ES listed',
+        regWarn[0] || 'no warning', regWarn.length === 1 && notListed.indexOf('DE') > -1 && notListed.indexOf('PT') > -1 && notListed.indexOf('ES') === -1);
+      p.done();
+      p = await open({});
+      check('no region -> no region warning', 'no warning', p.W.warns.filter(function (x) { return x.indexOf('consentMode.region') > -1; }),
+        !p.W.warns.some(function (x) { return x.indexOf('consentMode.region') > -1; }));
       p.done();
       p = await open({ cfg: JSON.stringify({ consentMode: { waitForUpdate: 'abc' } }) });
       defs = dl(p, 'consent', 'default');
@@ -899,7 +910,7 @@ if (!FB_LOCAL) {
         p.W.FrostBanner.getStatus() === 'decided' && p.W.FrostBanner.getSource() === 'custom' && earlyChanges.join() === 'custom' && !!p.W.FrostBanner.getConsent());
       p.done();
       // a choice made before start() that the final settings no longer accept (categories changed): withdrawn
-      async function earlyThenChanged(extra) {
+      async function earlyThenChanged(extra, openInListener) {
         var site = 'rc-changed-' + Date.now();
         var pp = await open({ dyn: '1', slowcfg: '2', cfg: JSON.stringify(assignTo({ site: site }, extra || {})) }); await waitLoaded(pp);
         pp.W.FrostBanner.open();
@@ -909,6 +920,12 @@ if (!FB_LOCAL) {
         pp.W.__beforeStart = true;
         var reloadEvt = false, afterReload = null, shownAfterReload = false, oldW = pp.W;
         oldW.addEventListener('frostbanner:shown', function () { if (reloadEvt) shownAfterReload = true; });
+        var wChange = null;
+        oldW.addEventListener('frostbanner:change', function (e) {
+          if (e.detail.source === 'withdrawn') wChange = { choices: e.detail.choices, beforeReload: !reloadEvt,
+            status: oldW.FrostBanner.getStatus(), consent: oldW.FrostBanner.getConsent(), src: oldW.FrostBanner.getSource() };
+          if (e.detail.source === 'withdrawn' && openInListener) oldW.FrostBanner.open();
+        });
         oldW.addEventListener('frostbanner:reload', function () {
           reloadEvt = true;
           // right after start() returns (same task, before the page goes away)
@@ -921,15 +938,20 @@ if (!FB_LOCAL) {
         await waitFor(function () { var Wn = pp.f.contentWindow; return Wn && Wn.FrostBanner && Wn.document.readyState === 'complete' && Wn.FrostBanner.getStatus() !== 'pending'; }, 8000);
         var Wn = pp.f.contentWindow;
         var denied = Array.prototype.filter.call(Wn.dataLayer || [], function (e) { return e[0] === 'consent' && e[1] === 'update'; }).map(function (e) { return e[2].analytics_storage; });
-        return { pp: pp, reloaded: !Wn.__beforeStart, reloadEvt: reloadEvt, afterReload: afterReload, shownAfterReload: shownAfterReload,
+        return { pp: pp, reloaded: !Wn.__beforeStart, reloadEvt: reloadEvt, afterReload: afterReload, shownAfterReload: shownAfterReload, wChange: wChange,
           status: Wn.FrostBanner.getStatus(), source: Wn.FrostBanner.getSource(),
-          consent: Wn.FrostBanner.getConsent(), lastUpdate: denied[denied.length - 1], idBefore: idBefore };
+          consent: Wn.FrostBanner.getConsent(), lastUpdate: denied[denied.length - 1], idBefore: idBefore,
+          panel: !!Wn.document.getElementById('frostbanner').shadowRoot.querySelector('.card.p'), main: !!Wn.document.getElementById('frostbanner').shadowRoot.querySelector('.card.m') };
       }
       var assignTo = function (a, b) { for (var k in b) a[k] = b[k]; return a; };
       var ec = await earlyThenChanged();
       check('choice before start(), categories changed by the final settings: withdrawn, page reloaded, banner asks again', 'reload, shown, null, no consent',
         { reloaded: ec.reloaded, event: ec.reloadEvt, status: ec.status, source: ec.source, consent: ec.consent },
         ec.reloaded && ec.reloadEvt && ec.status === 'shown' && ec.source === null && ec.consent === null);
+      check('W3: before the reload a change event announces the withdrawal', 'source withdrawn, analytics false, before reload, status pending, no consent',
+        ec.wChange, !!ec.wChange && ec.wChange.beforeReload && ec.wChange.choices.analytics === false && ec.wChange.choices.necessary === true &&
+          ec.wChange.choices.marketing === false && ec.wChange.choices.functional === false &&
+          ec.wChange.status === 'pending' && ec.wChange.consent === null && ec.wChange.src === null);
       check('while that reload starts: no banner, no "shown" event, status pending', 'no banner, no shown, pending',
         { afterReload: ec.afterReload, shownAfterReload: ec.shownAfterReload },
         !!ec.afterReload && ec.afterReload.status === 'pending' && !ec.afterReload.banner && !ec.shownAfterReload);
@@ -938,6 +960,12 @@ if (!FB_LOCAL) {
       check('same with reloadOnWithdraw: false: no reload, banner asks again, Consent Mode back to denied', 'no reload, shown, null, analytics denied',
         { reloaded: ec.reloaded, status: ec.status, source: ec.source, consent: ec.consent, lastUpdate: ec.lastUpdate },
         !ec.reloaded && ec.status === 'shown' && ec.source === null && ec.consent === null && ec.lastUpdate === 'denied');
+      check('same without reload: the change event announces the withdrawal too', 'source withdrawn, analytics false',
+        ec.wChange, !!ec.wChange && ec.wChange.choices.analytics === false);
+      ec.pp.done();
+      ec = await earlyThenChanged({ reloadOnWithdraw: false }, true);
+      check('a listener that calls open() inside the withdrawn change event keeps its panel', 'preferences open, no main banner over it, status shown',
+        { panel: ec.panel, main: ec.main, status: ec.status }, ec.panel && !ec.main && ec.status === 'shown');
       ec.pp.done();
       // the visitor's consent ID is kept for a choice made before start()
       p = await open({ dyn: '1', slowcfg: '1', age: 10, cfg: JSON.stringify({ site: 'rc-id-' + Date.now() }) }); await waitLoaded(p);
@@ -1127,6 +1155,60 @@ if (!FB_LOCAL) {
       try { Object.keys(localStorage).forEach(function (k) { if (/^fb_cfg_rc-prefs/.test(k)) localStorage.removeItem(k); }); } catch (e) {}
     } catch (e) {
       check('20. prefs before start: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
+    // ---------- 21. custom category keys (W1) ----------
+    try {
+      group('21. Custom category keys');
+      var customCats = ['necessary', 'analytics', 'socialMedia', 'ads2', 'my-cat', 'Under_score', 'k'.repeat(32),
+        '1abc', '-x', 'a b', 'x'.repeat(33), 'ключ', 'a"b', 7];
+      var ct = { socialMedia: ['Social media', 'Share buttons'], ads2: ['Ads 2', 'Second ad network'], 'my-cat': ['My category', 'Custom'], Under_score: ['Under score', 'u'] };
+      p = await open({ cfg: JSON.stringify({ categories: customCats, texts: { en: { c: ct } } }) });
+      var bannerText = p.card() ? p.card().textContent : '';
+      p.D.getElementById('spa').className = '';
+      ['socialMedia', 'my-cat', 'ads2'].forEach(function (cat) {
+        var s = p.D.createElement('script'); s.type = 'text/plain'; s.setAttribute('data-category', cat); s.text = "order.push('CAT " + cat + "')"; p.D.getElementById('spa').appendChild(s);
+      });
+      await tick(150);
+      var ranBefore = p.W.order.filter(function (x) { return /^CAT /.test(x); });
+      p.W.FrostBanner.open();
+      var sw21 = Array.prototype.map.call(p.sr().querySelectorAll('[data-c]'), function (x) { return x.getAttribute('data-c'); });
+      var names21 = Array.prototype.map.call(p.sr().querySelectorAll('.cat b'), function (x) { return x.textContent; });
+      check('socialMedia, ads2, my-cat, Under_score keep their switches and names; invalid keys are dropped', 'necessary,analytics,socialMedia,ads2,my-cat,Under_score',
+        { switches: sw21, names: names21 }, sw21.join() === 'necessary,analytics,socialMedia,ads2,my-cat,Under_score' && names21.indexOf('Social media') > -1 && names21.indexOf('My category') > -1);
+      var pick21 = p.W.FrostBanner.getConsent();
+      p.sr().querySelector('button[data-a="reject"]').click();
+      var rk = JSON.parse(p.W.localStorage.getItem('fb_consent') || '{}').k || '';
+      check('a 32-character key is accepted (it has no text, so no switch), 33 characters are not', '32 in the record key, 33 not',
+        { has32: rk.indexOf('k'.repeat(32)) > -1, has33: rk.indexOf('x'.repeat(33)) > -1, consentBefore: pick21 }, rk.indexOf('k'.repeat(32)) > -1 && rk.indexOf('x'.repeat(33)) === -1);
+      p.W.FrostBanner.open();
+      check('custom-category scripts do not run before consent', 'none ran', ranBefore, ranBefore.length === 0);
+      p.sr().querySelector('button[data-a="accept"]').click();
+      await waitFor(function () { return p.W.order.filter(function (x) { return /^CAT /.test(x); }).length >= 3; }, 3000);
+      var cc21 = p.W.FrostBanner.getConsent(), ranAfter = p.W.order.filter(function (x) { return /^CAT /.test(x); });
+      check('after "Accept all": custom categories granted and their scripts run', 'socialMedia, ads2, my-cat true; 3 scripts ran',
+        { consent: cc21, ran: ranAfter }, !!cc21 && cc21.socialMedia === true && cc21.ads2 === true && cc21['my-cat'] === true && ranAfter.length === 3);
+      check('no stray text in the banner for these keys', 'no "function", "undefined" or "[object"', bannerText.slice(0, 80) + '…', !/function|undefined|\[object/.test(bannerText));
+      p.done();
+      // a stored choice with such keys is restored (same category key, no new question)
+      p = await open({ cfg: JSON.stringify({ categories: ['necessary', 'socialMedia', 'my-cat'] }) });
+      p.sr().querySelector('button[data-a="accept"]').click();
+      var rec21 = JSON.parse(p.W.localStorage.getItem('fb_consent') || '{}');
+      p.done();
+      check('the category key of the record contains the custom keys', 'my-cat,necessary,socialMedia', rec21.k, rec21.k === 'my-cat,necessary,socialMedia');
+      // Object.prototype names as categories: no text from the prototype, nothing granted by accident
+      p = await open({ cfg: JSON.stringify({ categories: ['necessary', 'analytics', 'constructor', 'toString', 'hasOwnProperty'] }) });
+      var bt = p.card() ? p.card().textContent : '';
+      p.W.FrostBanner.open();
+      var pt = p.sr().querySelector('.card').textContent;
+      check('categories named constructor / toString / hasOwnProperty: no prototype text in banner or preferences', 'no "function" / "native code"',
+        (bt + ' | ' + pt).slice(0, 120), !/function|native code|undefined/.test(bt + pt));
+      p.sr().querySelector('button[data-a="reject"]').click();
+      var cProto = p.W.FrostBanner.getConsent();
+      check('and "Reject all" grants none of them', 'all false', cProto, !!cProto && cProto.constructor === false && cProto.toString === false && cProto.hasOwnProperty === false);
+      p.done();
+    } catch (e) {
+      check('21. custom category keys: group stopped by an exception', 'no exception', String(e && e.message || e), false);
     }
 
     // ---------- summary ----------

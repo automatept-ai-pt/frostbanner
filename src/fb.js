@@ -111,11 +111,20 @@
   // ---------- config values that reach HTML/CSS are validated (defence in depth against a bad config) ----------
   // Accent goes into a <style> block: only #rgb … #rrggbbaa is accepted.
   function accent() { return /^#[0-9a-fA-F]{3,8}$/.test(cfg.accent || '') ? cfg.accent : DEF.accent; }
-  // Category keys go into attributes and the consent record: lower-case letters and "_" only.
+  // Category keys go into attributes and the consent record: a letter, then letters, digits, "_"
+  // or "-", at most 32 characters (socialMedia, ads2, my-cat work as in 0.4.2). Nothing that could
+  // break out of an attribute. Names of Object.prototype members are harmless: granted() and the
+  // text lookups only use own properties. Dropped keys are reported once in the console.
+  var CATKEY = /^[A-Za-z][A-Za-z0-9_-]{0,31}$/, badKeys = {};
   function cats() {
-    return (Array.isArray(cfg.categories) ? cfg.categories : DEF.categories)
-      .filter(function (k) { return typeof k === 'string' && /^[a-z_]+$/.test(k); });
+    return (Array.isArray(cfg.categories) ? cfg.categories : DEF.categories).filter(function (k) {
+      if (typeof k === 'string' && CATKEY.test(k)) return true;
+      var s = typeof k === 'string' ? k.slice(0, 40) : typeof k;   // String() would throw on Object.create(null)
+      if (!badKeys[s]) { badKeys[s] = 1; warn('category "' + s + '" ignored: use a letter, then letters, digits, "_" or "-" (max 32)'); }
+      return false;
+    });
   }
+  function hasOwn(o, k) { return !!o && Object.prototype.hasOwnProperty.call(o, k); }
   // URLs from config (policy link, iframe data-src): http(s), relative paths and #anchors only
   // (no javascript:, data:, …). The string is normalised exactly as the browser's URL parser does
   // (tabs/newlines removed anywhere, C0 controls and spaces trimmed at both ends: "java\tscript:",
@@ -137,7 +146,7 @@
   // Default long text names only the categories actually in use (e.g. no "personalise ads" if Marketing is off).
   function defText(l) {
     var m = CATTXT[l] || CATTXT.en, parts = [];
-    each(function (k) { if (m[k]) parts.push(m[k]); });
+    each(function (k) { if (hasOwn(m, k) && typeof m[k] === 'string') parts.push(m[k]); });
     if (!parts.length) parts.push(m.necessary);
     var joined = parts.length > 1 ? parts.slice(0, -1).join(', ') + m.and + parts[parts.length - 1] : parts[0];
     return m.lead + joined + m.tail;
@@ -200,7 +209,13 @@
       var reg = (Array.isArray(g.region) ? g.region : []).filter(function (r) { return typeof r === 'string' && /^[A-Za-z]{2}(-[A-Za-z0-9]{1,3})?$/.test(r); });
       if (reg.length) {
         // Denied by default only in these regions (Google uses the most specific default);
-        // everywhere else the tags start granted. The owner's choice: off unless configured.
+        // everywhere else the tags start granted. The owner's choice: off unless configured, and
+        // always reported in the console with the EU/EEA/UK/CH countries that are not listed.
+        // a subregion (ES-CT) does not cover its whole country: only plain country codes count
+        var listed = reg.filter(function (r) { return r.length === 2; }).map(function (r) { return r.toUpperCase(); });
+        var missing = EU.filter(function (cc) { return listed.indexOf(cc) < 0; });
+        warn('consentMode.region is set: outside ' + reg.join(', ') + ' Google tags start with consent granted before the visitor chooses' +
+          (missing.length ? '. Not listed (consent required there): ' + missing.join(' ') : ''));
         var all = gcmState(acceptAll());   // with Global Privacy Control the ad keys stay denied
         all.security_storage = 'granted';
         w.gtag('consent', 'default', all);
@@ -318,8 +333,8 @@
       if (has) { if (ph.nextSibling !== f) f.parentNode.insertBefore(ph, f); continue; }   // keep it next to the iframe
       // Own entries only ("constructor", "toString"… are not categories); function replacers so
       // "$&"-like sequences in a name or host are inserted literally.
-      var t = tx(), own = Object.prototype.hasOwnProperty.call(t.c, cat) && Array.isArray(t.c[cat]);
-      var name = String(own ? t.c[cat][0] : cat);
+      var t = tx(), hasTxt = hasOwn(t.c, cat) && Array.isArray(t.c[cat]);
+      var name = String(hasTxt ? t.c[cat][0] : cat);
       if (/\s\{cat\}[\s.]/.test(t.embed)) name = name.toLowerCase(); // lower-case only inside a sentence (en, pt); quoted names keep their case
       var acc = accent();
       var p = d.createElement('div');
@@ -403,7 +418,7 @@
   // entry can be matched to the banner version that was on screen. FNV-1a, 32 bit: not a secret.
   function textHash(t) {
     var parts = [lang(), layout(), t.title, t.text, t.short, t.accept, t.reject, t.prefs, t.save, t.policy];
-    each(function (k) { var c = t.c[k]; parts.push(k, c && c[0], c && c[1]); });
+    each(function (k) { var c = hasOwn(t.c, k) ? t.c[k] : null; parts.push(k, c && c[0], c && c[1]); });
     var s = JSON.stringify(parts), h = 0x811c9dc5;
     for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
     return ('0000000' + h.toString(16)).slice(-8);
@@ -454,7 +469,7 @@
     var oc = own && typeof own === 'object' ? own.c : null;
     t.c = assign({}, base.c);
     if (oc && typeof oc === 'object') for (var ck in oc) {
-      var e = oc[ck], bc = base.c[ck];
+      var e = oc[ck], bc = hasOwn(base.c, ck) ? base.c[ck] : null;
       if (Array.isArray(e) && typeof e[0] === 'string' && e[0])
         t.c[ck] = [e[0], typeof e[1] === 'string' ? e[1] : (bc ? bc[1] : '')];
     }
@@ -624,7 +639,7 @@
     } else {
       h += '<h2 id="fbt">' + esc(t.manage) + '</h2><p id="fbd">' + esc(t.text) + '</p><div class="cats">';
       each(function (k) {
-        var c = t.c[k]; if (!c || typeof c !== 'object') return;
+        var c = hasOwn(t.c, k) ? t.c[k] : null; if (!c || typeof c !== 'object') return;
         var nec = k === 'necessary';
         h += '<label class="cat"><span><b>' + esc(c[0]) + '</b><small>' + esc(c[1]) + '</small></span>' +
           '<input type="checkbox" role="switch" class="sw" data-c="' + k + '"' +
@@ -752,13 +767,25 @@
     // that one is withdrawn again — Consent Mode back to denied, cookies of its categories removed).
     if (state) {
       gcm('update', {}); purge({});
+      // The withdrawal is announced like any change (integrations such as the GTM template must
+      // learn about it even if a reload follows and is cancelled): source 'withdrawn', everything
+      // except necessary off. getStatus()/getConsent()/getSource() already say 'pending'/null/null.
+      // choices: every current category off, plus every category of the withdrawn choice that the
+      // final settings no longer have (also off), so listeners can revoke all of them.
+      var revoked = pick(function () { return false; });
+      for (var wk in state) if (hasOwn(state, wk) && !hasOwn(revoked, wk)) revoked[wk] = wk === 'necessary';
+      stored = null; state = null; source = null; status = 'pending';
+      embeds({});   // withdrawn iframes are unloaded (also if the reload below is cancelled)
+      var gen0 = runGen;
+      emit('change', { choices: revoked, source: 'withdrawn' });
+      // A listener may already have acted (a choice, reset() — which restarts — or open()).
+      if (state || runGen !== gen0) return;
+      prefsOpen = mode === 'banner' && view === 'prefs';
       // Scripts it already ran cannot be unloaded: reload, as on any withdrawal (no loop: the
       // stored record is invalid for these settings, so the reloaded page just shows the banner).
       if (Object.keys(ran).length && cfg.reloadOnWithdraw !== false && !cfg.container && !preview) {
         emit('reload', { categories: Object.keys(ran) });
         // The page is going away: no banner and no 'shown' now; the reloaded page asks.
-        stored = null; state = null; source = null; status = 'pending';
-        embeds({});   // in case the reload is cancelled (beforeunload): withdrawn iframes are unloaded
         try { location.reload(); } catch (e) {}
         return;
       }

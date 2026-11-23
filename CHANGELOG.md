@@ -23,6 +23,8 @@ All notable changes to the FrostBanner widget. The format follows [Keep a Change
 - Keyboard: in the centred window Tab stays inside the banner; after a choice the focus moves to the floating button; Escape leaves the preferences.
 - Centred window: the page behind is made inert while it is open, so a mouse click cannot move the focus out of it either (elements the site made inert itself stay inert; not in editor previews).
 - Custom category texts are merged per category instead of replacing all of them.
+- Blocked inline scripts wait for the external scripts above them (at most 15 seconds); in 0.4.x everything started at once. Mark independent tags `async`.
+- `consentMode.region` writes a console warning listing the EU/EEA/UK/CH countries that are not in the list.
 - The bundle is about 60 KB minified (about 23 KB compressed), up from about 55 KB. Built with terser 5.51.4.
 - Documentation: the README documents the whole JavaScript API, the Consent Mode options and the build; its screenshots are WebP and much lighter.
 
@@ -33,10 +35,10 @@ All notable changes to the FrostBanner widget. The format follows [Keep a Change
 - The script queue no longer stops on scripts the browser never loads (`nomodule`, non-JavaScript types).
 - With Global Privacy Control, "Accept all" no longer switches off Marketing that the visitor had turned on.
 - Integration options set on the page (`reloadOnWithdraw`, `respectGpc`, `consentVersion`, `consentMode`) are kept when dashboard settings arrive, unless the dashboard sends its own value.
-- A choice made before FrostBanner has started (preferences opened from the page while it loads) keeps the visitor's consent ID and stays in force if it fits the final settings; otherwise it is withdrawn and the banner asks again (if its scripts already ran, the page reloads without showing the banner first). Preferences opened before the start stay open and keep the switches the visitor changed.
+- A choice made before FrostBanner has started (preferences opened from the page while it loads) keeps the visitor's consent ID and stays in force if it fits the final settings; otherwise it is withdrawn — announced by a `change` event with `source: 'withdrawn'` — and the banner asks again (if its scripts already ran, the page reloads right after that event, without showing the banner first). Preferences opened before the start stay open and keep the switches the visitor changed.
 
 ### Security
-- Configuration values that end up in the banner's HTML and CSS (accent colour, category keys, policy link) are validated more strictly.
+- Configuration values that end up in the banner's HTML and CSS (accent colour, category keys, policy link) are validated more strictly. Category keys: a letter, then letters, digits, `_` or `-`, at most 32 characters (`socialMedia`, `ads2`, `my-cat` keep working); other keys are ignored with a console warning.
 - Policy links and embed addresses accept only `http(s)` and relative URLs.
 - A category counts as accepted only when the visitor accepted it: category names that match built-in JavaScript object properties are no longer treated as accepted.
 
