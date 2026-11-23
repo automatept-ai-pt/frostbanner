@@ -54,6 +54,17 @@
   });
   window.frostBannerConfig = Object.assign({ site: 'demo', lang: 'en', maxAgeDays: 180 },
     JSON.parse(q.get('cfg') || '{}'));
+  // ?cache=1: fresh cached dashboard settings for cfg.site (the widget then starts without waiting)
+  if (q.get('cache') === '1') {
+    try {
+      localStorage.setItem('fb_cfg_' + frostBannerConfig.site, JSON.stringify({ t: Date.now(),
+        c: { template: 'frost', plan: 'pro', lang: 'en', categories: ['necessary', 'analytics', 'marketing', 'functional'], geo: {} } }));
+    } catch (e) {}
+  }
+  // getStatus()/getSource() at the moment the script's onload fires
+  window.recordOnload = function () {
+    window.atOnload = { status: FrostBanner.getStatus ? FrostBanner.getStatus() : 'no getStatus', source: FrostBanner.getSource ? FrostBanner.getSource() : 'no getSource' };
+  };
   // Loaded synchronously (as with a plain <script> tag), so the widget sees the config above.
   var src = q.get('bundle') || '../dist/fb.min.js';
   // never test a stale bundle from the browser cache (the query goes before any #fragment)
@@ -62,7 +73,17 @@
   src += (src.indexOf('?') < 0 ? '?' : '&') + 'nocache=' + Date.now() + hash;
   // ?pregtag=1: the page defines its own gtag() before FrostBanner loads
   if (q.get('pregtag') === '1') { window.gtagCalls = []; window.gtag = function () { window.gtagCalls.push(Array.prototype.slice.call(arguments)); }; }
-  document.write('<script src="' + src.replace(/[<>"&]/g, encodeURIComponent) + '"><\/script>');
+  if (q.get('dyn') === '1') {
+    // ?dyn=1: the script is added after DOMContentLoaded, so start() runs synchronously while it executes
+    document.addEventListener('DOMContentLoaded', function () {
+      var s = document.createElement('script');
+      s.src = src;
+      s.onload = recordOnload;
+      document.head.appendChild(s);
+    });
+  } else {
+    document.write('<script src="' + src.replace(/[<>"&]/g, encodeURIComponent) + '" onload="recordOnload()"><\/script>');
+  }
 })();
 </script>
 <style>
@@ -624,9 +645,9 @@ if (!FB_LOCAL) {
       p = await open({}, '13. configure({ template: "midnight", accent: "#e0a33a" }): dark banner with orange buttons');
       var api = p.W.FrostBanner;
       check('API methods documented in the README exist', 'open, show, configure, getConsent, on, reset, templates, languages, version',
-        ['open', 'show', 'configure', 'getConsent', 'on', 'reset'].filter(function (m) { return typeof api[m] !== 'function'; }).concat(
+        ['open', 'show', 'configure', 'getConsent', 'getStatus', 'getSource', 'on', 'reset'].filter(function (m) { return typeof api[m] !== 'function'; }).concat(
           Array.isArray(api.templates) && api.templates.length === 14 ? [] : ['templates']).concat(typeof api.version === 'string' ? [] : ['version']),
-        ['open', 'show', 'configure', 'getConsent', 'on', 'reset'].every(function (m) { return typeof api[m] === 'function'; }) &&
+        ['open', 'show', 'configure', 'getConsent', 'getStatus', 'getSource', 'on', 'reset'].every(function (m) { return typeof api[m] === 'function'; }) &&
           Array.isArray(api.templates) && api.templates.length === 14 && typeof api.version === 'string');
       api.configure({ template: 'midnight', accent: '#e0a33a' });
       await tick(100);
@@ -789,6 +810,62 @@ if (!FB_LOCAL) {
       p.done();
     } catch (e) {
       check('16. GTM mode: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
+    // ---------- 17. getStatus() / getSource() ----------
+    try {
+      group('17. getStatus() / getSource()');
+      var st = function (pp) { return { status: pp.W.FrostBanner.getStatus(), source: pp.W.FrostBanner.getSource(), consent: !!pp.W.FrostBanner.getConsent() }; };
+      var waitLoaded = function (pp) { return waitFor(function () { return !!pp.W.atOnload; }, 5000); };
+      // parser-inserted tag in <head>: start() waits for DOMContentLoaded
+      p = await open({});
+      check('script in <head>: "pending" at onload (start() waits for the DOM)', 'pending, source null', p.W.atOnload,
+        !!p.W.atOnload && p.W.atOnload.status === 'pending' && p.W.atOnload.source === null);
+      check('then "shown" with the banner, no consent, source null', 'shown, null, no consent', st(p),
+        st(p).status === 'shown' && st(p).source === null && !st(p).consent && !!p.card());
+      p.sr().querySelector('button[data-a="accept"]').click();
+      check('after "Accept all": decided / accept_all, getConsent() returns it', 'decided, accept_all, consent', st(p),
+        st(p).status === 'decided' && st(p).source === 'accept_all' && st(p).consent);
+      var inChange = null;
+      p.W.FrostBanner.on('change', function () { inChange = st(p); });
+      p.W.FrostBanner.open(); p.sr().querySelector('button[data-a="reject"]').click();
+      check('reject: decided / reject_all, already set inside the change listener', 'decided, reject_all', inChange,
+        !!inChange && inChange.status === 'decided' && inChange.source === 'reject_all');
+      p.W.FrostBanner.open(); p.sr().querySelector('button[data-a="save"]').click();
+      check('save in preferences: decided / custom', 'decided, custom', st(p), st(p).status === 'decided' && st(p).source === 'custom');
+      p.W.FrostBanner.reset(); await tick(50);
+      check('after reset(): shown, source null, no consent', 'shown, null', st(p), st(p).status === 'shown' && st(p).source === null && !st(p).consent);
+      p.done();
+      // added after DOMContentLoaded: start() runs synchronously, so onload already sees the result
+      p = await open({ dyn: '1' }); await waitLoaded(p);
+      check('synchronous start (script added after DOMContentLoaded): "shown" at onload', 'shown, null', p.W.atOnload,
+        !!p.W.atOnload && p.W.atOnload.status === 'shown' && p.W.atOnload.source === null);
+      p.done();
+      p = await open({ dyn: '1', cache: '1', cfg: JSON.stringify({ site: 'rc-cached-site' }) }); await waitLoaded(p);
+      check('synchronous start with cached dashboard settings: "shown" at onload', 'shown, null', p.W.atOnload,
+        !!p.W.atOnload && p.W.atOnload.status === 'shown' && p.W.atOnload.source === null && !!p.card());
+      p.done();
+      p = await open({ dyn: '1', age: 10 }); await waitLoaded(p);
+      check('synchronous start with a stored choice: decided / restore at onload', 'decided, restore', p.W.atOnload,
+        !!p.W.atOnload && p.W.atOnload.status === 'decided' && p.W.atOnload.source === 'restore' && !!p.W.FrostBanner.getConsent());
+      p.done();
+      p = await open({ dyn: '1', cfg: JSON.stringify({ geo: { mode: 'eu', country: 'US' } }) }); await waitLoaded(p);
+      check('synchronous start outside the region: decided / outside_region at onload', 'decided, outside_region', p.W.atOnload,
+        !!p.W.atOnload && p.W.atOnload.status === 'decided' && p.W.atOnload.source === 'outside_region');
+      p.W.FrostBanner.reset(); await tick(50);
+      check('outside the region, after reset(): decided again, source outside_region', 'decided, outside_region', st(p),
+        st(p).status === 'decided' && st(p).source === 'outside_region' && st(p).consent);
+      p.done();
+      // no cached settings: start() waits for the settings request, so onload sees "pending"
+      p = await open({ dyn: '1', cfg: JSON.stringify({ site: 'rc-nocache-' + Date.now() }) }); await waitLoaded(p);
+      var pendAtOnload = p.W.atOnload;
+      await waitFor(function () { return p.W.FrostBanner.getStatus() !== 'pending'; }, 5000);
+      check('no cached settings: "pending" at onload, "shown" after the settings request', 'pending, then shown',
+        { atOnload: pendAtOnload && pendAtOnload.status, later: p.W.FrostBanner.getStatus() },
+        !!pendAtOnload && pendAtOnload.status === 'pending' && p.W.FrostBanner.getStatus() === 'shown');
+      p.done();
+    } catch (e) {
+      check('17. getStatus/getSource: group stopped by an exception', 'no exception', String(e && e.message || e), false);
     }
 
     // ---------- summary ----------

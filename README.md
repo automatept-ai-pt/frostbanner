@@ -103,6 +103,8 @@ What FrostBanner provides in GTM mode for the template to read: the first-party 
 ```js
 FrostBanner.open();          // open the preferences
 FrostBanner.getConsent();    // { necessary: true, analytics: false, ... } or null
+FrostBanner.getStatus();     // 'pending' | 'shown' | 'decided' (see below)
+FrostBanner.getSource();     // source of the applied choice or null (see below)
 FrostBanner.on('change', function (e) { console.log(e.choices, e.source); });
 FrostBanner.reset();         // forget the choice (testing; reload the page afterwards)
 FrostBanner.show();          // show the banner again (main view)
@@ -111,6 +113,8 @@ FrostBanner.templates;       // names of the 14 built-in styles
 FrostBanner.languages;       // codes of the 29 built-in languages
 FrostBanner.version;         // e.g. "0.5.0"
 ```
+
+`getStatus()` is `'pending'` until FrostBanner has started (it waits for the page to be parsed and, without cached dashboard settings, for the settings request), `'shown'` while the banner waits for a choice, and `'decided'` once a choice is applied (`getConsent()` then returns it). `getSource()` returns how that choice was made — `'restore'`, `'outside_region'`, `'accept_all'`, `'reject_all'` or `'custom'`, the same values as `source` in the `change` event — or `null` when there is no choice. Both are already updated inside `change` listeners. After `reset()` the status is `'shown'` again (`'decided'` outside the region) and the source `null` (`'outside_region'` outside the region). Integrations such as the GTM template can read them as soon as the script has loaded: when FrostBanner starts synchronously (script added after the page was parsed, settings cached) the status is already final at the script's `onload`.
 
 Events: `change`, `consentmode`, `script`, `embed`, `log`, `shown`, `skip`, `reload`. They are also dispatched on `window` as `frostbanner:<name>`.
 

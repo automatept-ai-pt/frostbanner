@@ -86,6 +86,9 @@
   }
 
   var L = {}, mem = null, stored = null, state = null, draft = { necessary: true };
+  // For integrations (GTM template): 'pending' until start() ran, 'shown' while the banner waits
+  // for a choice, 'decided' once a choice is applied; source = source of the last applied choice.
+  var status = 'pending', source = null;
   var host, root, view = 'main', mode = null, typed = false, preview = false;
 
   function assign(t) {
@@ -360,7 +363,11 @@
   }
 
   // ---------- decisions ----------
-  function apply(c, source) { state = c; gcm('update', c); purge(c); unblock(c); embeds(c); emit('change', { choices: c, source: source }); }
+  // Status and source are set first, so they are already right in every listener of this choice.
+  function apply(c, src) {
+    state = c; status = 'decided'; source = src;
+    gcm('update', c); purge(c); unblock(c); embeds(c); emit('change', { choices: c, source: src });
+  }
   // Ask again only when the set of categories changes, not on every text/colour edit (version
   // changes with every published edit), or when the owner raises consentVersion on purpose
   // (e.g. after a change in the cookie policy). Records without cv count as consentVersion 1.
@@ -689,6 +696,7 @@
       emit('skip', { country: cfg.geo.country });
       return;
     }
+    status = 'shown';
     render('main');
     emit('shown', { layout: cfg.layout });
   }
@@ -735,6 +743,8 @@
     version: '0.5.0',
     open: function () { render('prefs'); },
     getConsent: function () { return state ? assign({}, state) : null; },
+    getStatus: function () { return status; },   // 'pending' | 'shown' | 'decided'
+    getSource: function () { return source; },   // 'restore' | 'outside_region' | 'accept_all' | 'reject_all' | 'custom' | null
     on: function (e, f) { (L[e] = L[e] || []).push(f); },
     templates: Object.keys(TPL),
     languages: Object.keys(T),
@@ -743,7 +753,7 @@
     // New visitor simulation. On a real site, call this and reload the page:
     // scripts that already ran cannot be unloaded.
     reset: function () {
-      clearStore(); stored = null; state = null;
+      clearStore(); stored = null; state = null; status = 'pending'; source = null;
       runQ = []; waiting = 0; runGen++; ran = {};
       d.querySelectorAll('script[data-fb-clone]').forEach(function (s) { s.remove(); });
       d.querySelectorAll('script[data-fb-run]').forEach(function (s) { s.removeAttribute('data-fb-run'); });

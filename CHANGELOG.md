@@ -15,6 +15,7 @@ All notable changes to the FrostBanner widget. The format follows [Keep a Change
 - When a visitor withdraws a category whose scripts already ran on the page, the page reloads so they stop (`reloadOnWithdraw: false` turns this off; event `reload`).
 - Blocked scripts and iframes added after page load (single-page apps, lazy-loaded content) are handled.
 - `FrostBanner.languages` lists the built-in languages.
+- `FrostBanner.getStatus()` (`'pending'`, `'shown'`, `'decided'`) and `FrostBanner.getSource()` (source of the applied choice, as in the `change` event, or `null`) for integrations such as the GTM template.
 - `package.json` with `npm run build`; `test/release-check.html`, a browser check of the built widget.
 
 ### Changed
