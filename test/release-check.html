@@ -1034,6 +1034,39 @@ if (!FB_LOCAL) {
       check('19. preview flag: group stopped by an exception', 'no exception', String(e && e.message || e), false);
     }
 
+    // ---------- 20. preferences opened before the start ----------
+    try {
+      group('20. Preferences opened before the start');
+      // no stored choice: the visitor switches analytics on before the start; the start keeps the panel and the switch
+      p = await open({ dyn: '1', slowcfg: '1', cfg: JSON.stringify({ site: 'rc-prefs-' + Date.now() }) }); await waitLoaded(p);
+      var pendingBefore = p.W.FrostBanner.getStatus();
+      p.W.FrostBanner.open();
+      p.sr().querySelector('input[data-c="analytics"]').click();
+      await waitFor(function () { return p.W.fbEvents.indexOf('shown') > -1; }, 6000);   // start() ran
+      var swA = p.sr().querySelector('input[data-c="analytics"]');
+      check('preferences opened before the start stay open, the changed switch is kept', 'panel open, analytics on, status shown',
+        { before: pendingBefore, panel: !!p.sr().querySelector('.card.p'), mainBanner: !!p.sr().querySelector('.card.m'), analytics: swA && swA.checked, status: p.W.FrostBanner.getStatus() },
+        pendingBefore === 'pending' && !!p.sr().querySelector('.card.p') && !p.sr().querySelector('.card.m') && !!swA && swA.checked && p.W.FrostBanner.getStatus() === 'shown');
+      p.sr().querySelector('button[data-a="save"]').click();
+      var cP = p.W.FrostBanner.getConsent();
+      check('saving then applies the kept draft', 'analytics on, marketing off, custom', { consent: cP, source: p.W.FrostBanner.getSource() },
+        !!cP && cP.analytics === true && cP.marketing === false && p.W.FrostBanner.getSource() === 'custom');
+      p.done();
+      // stored choice, panel opened before the start and not touched: it shows the stored choice after the start
+      p = await open({ dyn: '1', slowcfg: '1', age: 10, cfg: JSON.stringify({ site: 'rc-prefs2-' + Date.now() }) }); await waitLoaded(p);
+      p.W.FrostBanner.open();
+      await waitFor(function () { return p.W.FrostBanner.getStatus() === 'decided'; }, 6000);
+      await tick(50);
+      var swA2 = p.sr().querySelector('input[data-c="analytics"]'), swM2 = p.sr().querySelector('input[data-c="marketing"]');
+      check('stored choice, panel untouched: it stays open and shows the stored choice', 'panel open, analytics on, marketing off, decided/restore',
+        { panel: !!p.sr().querySelector('.card.p'), analytics: swA2 && swA2.checked, marketing: swM2 && swM2.checked, status: p.W.FrostBanner.getStatus(), source: p.W.FrostBanner.getSource() },
+        !!p.sr().querySelector('.card.p') && !!swA2 && swA2.checked && !!swM2 && !swM2.checked && p.W.FrostBanner.getStatus() === 'decided' && p.W.FrostBanner.getSource() === 'restore');
+      p.done();
+      try { Object.keys(localStorage).forEach(function (k) { if (/^fb_cfg_rc-prefs/.test(k)) localStorage.removeItem(k); }); } catch (e) {}
+    } catch (e) {
+      check('20. prefs before start: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');

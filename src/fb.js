@@ -92,7 +92,7 @@
   var L = {}, mem = null, stored = null, state = null, draft = { necessary: true };
   // For integrations (GTM template): 'pending' until start() ran, 'shown' while the banner waits
   // for a choice, 'decided' once a choice is applied; source = source of the last applied choice.
-  var status = 'pending', source = null, started = false;
+  var status = 'pending', source = null, started = false, draftTouched = false;
   var host, root, view = 'main', mode = null, typed = false, preview = false;
 
   function assign(t) {
@@ -378,6 +378,7 @@
   function consentVersion() { var n = +cfg.consentVersion; return n >= 1 && n % 1 === 0 ? n : 1; }
   function catKey() { return cats().sort().join(','); }
   function decide(c, action) {
+    draftTouched = false;
     // Scripts that already ran cannot be unloaded: if the visitor withdraws a category whose
     // scripts ran on this page, the page is reloaded so they stop (reloadOnWithdraw: false to opt out).
     var gone = Object.keys(ran).filter(function (k) { return !c[k]; });
@@ -546,7 +547,7 @@
     });
     root.addEventListener('change', function (e) {
       var k = e.target.getAttribute && e.target.getAttribute('data-c');
-      if (k) draft[k] = e.target.checked;
+      if (k) { draft[k] = e.target.checked; draftTouched = true; }
     });
     root.addEventListener('keydown', function (e) {
       if (mode !== 'banner') return;
@@ -719,9 +720,15 @@
     // the settings request was pending) stays in force if it is still valid for the final settings:
     // no second 'change' event; only the content parsed since then gets the same rules.
     if (state && valid(stored)) { unblock(state); embeds(state); showFab(); return; }
+    // Preferences opened before the start (FrostBanner.open() from the page) stay open, and the
+    // switches the visitor already changed are kept.
+    var prefsOpen = mode === 'banner' && view === 'prefs';
     stored = readStore();
     if (valid(stored)) {
-      draft = assign({}, stored.c); apply(stored.c, 'restore'); showFab(); return;
+      if (!draftTouched) draft = assign({}, stored.c);
+      apply(stored.c, 'restore');
+      if (prefsOpen) { if (!draftTouched) render('prefs'); } else showFab();   // untouched: show the stored choice
+      return;
     }
     // No valid choice (none yet, or one made before the final settings changed the categories:
     // that one is withdrawn again — Consent Mode back to denied, cookies of its categories removed).
@@ -737,15 +744,16 @@
         return;
       }
     }
-    stored = null; draft = { necessary: true }; state = null; source = null;
+    stored = null; state = null; source = null;
+    if (!(prefsOpen && draftTouched)) draft = { necessary: true };
     embeds({});
     if (!inRegion()) {
-      apply(acceptAll(), 'outside_region');
+      apply(acceptAll(), 'outside_region');   // open preferences stay open
       emit('skip', { country: cfg.geo.country });
       return;
     }
     status = 'shown';
-    render('main');
+    if (!prefsOpen) render('main');
     emit('shown', { layout: cfg.layout });
   }
 
@@ -807,7 +815,7 @@
     // New visitor simulation. On a real site, call this and reload the page:
     // scripts that already ran cannot be unloaded.
     reset: function () {
-      clearStore(); stored = null; state = null; status = 'pending'; source = null;
+      clearStore(); stored = null; state = null; status = 'pending'; source = null; draftTouched = false;
       runQ = []; waiting = 0; runGen++; ran = {};
       d.querySelectorAll('script[data-fb-clone]').forEach(function (s) { s.remove(); });
       d.querySelectorAll('script[data-fb-run]').forEach(function (s) { s.removeAttribute('data-fb-run'); });
