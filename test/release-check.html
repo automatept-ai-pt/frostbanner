@@ -178,429 +178,485 @@ if (!FB_LOCAL) {
   async function run() {
     var p, v;
 
-    // ---------- 1. consent expiry ----------
-    group('1. Consent expiry (maxAgeDays = 180, record in localStorage only)');
-    for (const age of [10, 179]) {
-      p = await open({ age: age });
+    try {
+      // ---------- 1. consent expiry ----------
+      group('1. Consent expiry (maxAgeDays = 180, record in localStorage only)');
+      for (const age of [10, 179]) {
+        p = await open({ age: age });
+        v = p.W.FrostBanner.getConsent();
+        check('Record ' + age + ' days old is restored', 'restored, no banner', { consent: v && v.analytics === true, banner: !!p.card() },
+          v && v.analytics === true && !p.card());
+        p.done();
+      }
+      p = await open({ age: 200 }, '1. Expired consent (200 days): the banner must be shown again');
+      check('Record 200 days old is rejected', 'banner shown, getConsent() = null', { consent: p.W.FrostBanner.getConsent(), banner: !!p.card() },
+        p.W.FrostBanner.getConsent() === null && !!p.card());
+      p = await open({ age: 'none' });
+      check('Record without ts is rejected', 'banner shown', { banner: !!p.card() }, !!p.card());
+      p.done();
+      p = await open({ age: -30 });
+      check('Record with ts 30 days in the future is rejected', 'banner shown', { banner: !!p.card() }, !!p.card());
+      p.done();
+    } catch (e) {
+      check('1. consent expiry: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
+    try {
+      // ---------- 2. XSS ----------
+      group('2. XSS through config values');
+      p = await open({ cfg: JSON.stringify({ accent: EVIL_ACCENT }) }, '2. Malicious accent: default blue buttons, no broken image');
+      var acc = getComputedStyle(p.sr().querySelector('.w')).getPropertyValue('--a').trim();
+      check('accent with </style><img onerror> is ignored', 'no JS, no <img>, accent ' + DEFAULT_ACCENT,
+        { pwned: p.W.pwned, imgs: p.sr().querySelectorAll('img').length, accent: acc },
+        p.W.pwned === 0 && p.sr().querySelectorAll('img').length === 0 && acc === DEFAULT_ACCENT);
+      p = await open({ cfg: JSON.stringify({ accent: '#e0a33a' }) });
+      acc = getComputedStyle(p.sr().querySelector('.w')).getPropertyValue('--a').trim();
+      check('valid accent #e0a33a is applied', '#e0a33a', acc, acc === '#e0a33a');
+      p.done();
+
+      var urls = [
+        ['javascript:window.pwned=3', '#'], ['java\tscript:window.pwned=3', '#'], ['  JavaScript:window.pwned=3', '#'],
+        ['\u0001javascript:window.pwned=3', '#'], ['data:text/html,<script>parent.pwned=4<\/script>', '#'], ['vbscript:x', '#'],
+        ['https://example.com/privacy', 'https://example.com/privacy'], ['/privacy', '/privacy'], ['privacy.html', 'privacy.html'],
+        ['#cookies', '#cookies'], ['//example.com/p', '//example.com/p'],
+        // Unicode spaces are not stripped by the browser: the link must stay a harmless relative path.
+        ['\u00a0javascript:window.pwned=3', null], ['\ufeffjavascript:window.pwned=3', null]
+      ];
+      for (const u of urls) {
+        p = await open({ cfg: JSON.stringify({ policyUrl: u[0] }) });
+        var a = p.sr().querySelector('#fbd a'), href = a && a.getAttribute('href');
+        if (u[1] === null) {
+          check('policyUrl ' + JSON.stringify(u[0]), 'not javascript:, resolves to http(s)', 'href = ' + JSON.stringify(href) + ', protocol ' + (a && a.protocol),
+            a && /^https?:$/.test(a.protocol) && !/^javascript:/i.test(href) && p.W.pwned === 0);
+        } else check('policyUrl ' + JSON.stringify(u[0]), 'href = ' + u[1], 'href = ' + href, href === u[1] && p.W.pwned === 0);
+        p.done();
+      }
+
+      var c = { necessary: ['Necessary', 'n'], analytics: ['Analytics', 'a'] };
+      c[EVIL_KEY] = ['Evil', 'e']; c['Bad-Key'] = ['Bad', 'b'];
+      p = await open({ cfg: JSON.stringify({ categories: ['necessary', 'analytics', EVIL_KEY, 'Bad-Key', 42], texts: { en: { c: c } } }) });
+      p.W.FrostBanner.open(); await tick(100);
+      var sw = Array.prototype.map.call(p.sr().querySelectorAll('[data-c]'), function (x) { return x.getAttribute('data-c'); });
+      var injected = p.sr().querySelectorAll('[onfocus],[autofocus]').length;
+      check('category keys outside ^[a-z_]+$ are dropped', 'switches necessary,analytics; no injected attributes',
+        { switches: sw, injected: injected, pwned: p.W.pwned }, sw.join(',') === 'necessary,analytics' && injected === 0 && p.W.pwned === 0);
+      p.done();
+    } catch (e) {
+      check('2. XSS: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
+    try {
+      // ---------- 3. script order ----------
+      group('3. Script order after consent (lib.js + inline script that uses it)');
+      p = await open({});
+      acceptAnalyticsOnly(p);
+      await waitFor(function () { return p.W.order.length >= 4; });
+      var ord = p.W.order.slice();
+      check('lib.js runs before the inline script', 'order starts lib, inline lib=true', ord, ord[0] === 'lib' && ord[1] === 'inline lib=true');
+      check('non-JS data-type does not stall the queue', 'contains "inline after x-template"', ord, ord.indexOf('inline after x-template') > -1);
+      check('nomodule external script does not stall the queue', 'contains "inline after nomodule"', ord, ord.indexOf('inline after nomodule') > -1);
+      await waitFor(function () { return p.W.order.some(function (x) { return /^onload ran/.test(x); }); });
+      var onl = p.W.order.filter(function (x) { return /^onload ran/.test(x); });
+      check('attributes are kept on the script that runs (onload, data-*)', 'onload ran, attr=kept', onl.join('; ') || 'not run', onl[0] === 'onload ran, attr=kept');
+      var libClone = p.D.querySelector('script[data-fb-clone][src="lib.js"]');
+      check('external clone without async attribute has async = false', 'async = false', 'async = ' + (libClone && libClone.async), libClone && libClone.async === false);
+      p.done();
+    } catch (e) {
+      check('3. script order: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
+    try {
+      // ---------- 4. content added after load ----------
+      group('4. Scripts and iframes added after page load');
+      p = await open({}, '4. Marketing iframe added after load: placeholder with "Allow and show"');
+      var D = p.D, spa = D.getElementById('spa');
+      spa.className = '';
+      var blocked = function (cat, code) { var s = D.createElement('script'); s.type = 'text/plain'; s.setAttribute('data-category', cat); s.text = code; return s; };
+      // Local frame only: the check makes no requests to third parties.
+      var frame = function (cat, id, src) { var i = D.createElement('iframe'); i.id = id; i.width = 300; i.height = 140; i.setAttribute('data-category', cat);
+        i.setAttribute('data-src', src || 'frame.html#' + id); return i; };
+      var fstate = function (id) { var i = D.getElementById(id), ph = i.previousElementSibling;
+        return (i.getAttribute('src') ? 'loaded' : 'no-src') + (ph && ph.hasAttribute('data-fb-ph') ? '+placeholder' : ''); };
+
+      spa.appendChild(frame('marketing', 'mk1'));
+      spa.appendChild(blocked('analytics', "order.push('dyn before decision')"));
+      await tick(150);
+      check('iframe added before a decision gets a placeholder', 'no-src+placeholder', fstate('mk1'), fstate('mk1') === 'no-src+placeholder');
+      check('script added before a decision does not run', 'not run', p.W.order.indexOf('dyn before decision') > -1 ? 'ran' : 'not run', p.W.order.indexOf('dyn before decision') === -1);
+
+      acceptAnalyticsOnly(p);
+      await waitFor(function () { return p.W.order.indexOf('dyn before decision') > -1; });
+      check('that script runs once analytics is accepted', 'ran', p.W.order.indexOf('dyn before decision') > -1 ? 'ran' : 'not run', p.W.order.indexOf('dyn before decision') > -1);
+
+      spa.appendChild(blocked('analytics', "order.push('dyn analytics')"));
+      spa.appendChild(blocked('marketing', "order.push('dyn MARKETING')"));
+      spa.appendChild(frame('analytics', 'an1'));
+      var sec = D.createElement('section');
+      sec.appendChild(blocked('analytics', "order.push('dyn nested')"));
+      sec.appendChild(frame('marketing', 'mk2'));
+      spa.appendChild(sec);
+      await tick(300);
+      var o = p.W.order;
+      check('new analytics script runs', 'ran', o.indexOf('dyn analytics') > -1 ? 'ran' : 'not run', o.indexOf('dyn analytics') > -1);
+      check('new marketing script does not run (not accepted)', 'not run', o.indexOf('dyn MARKETING') > -1 ? 'ran' : 'not run', o.indexOf('dyn MARKETING') === -1);
+      check('script inside an added <section> runs', 'ran', o.indexOf('dyn nested') > -1 ? 'ran' : 'not run', o.indexOf('dyn nested') > -1);
+      check('new analytics iframe loads', 'loaded', fstate('an1'), fstate('an1') === 'loaded');
+      check('new marketing iframe gets a placeholder', 'no-src+placeholder', fstate('mk2'), fstate('mk2') === 'no-src+placeholder');
+
+      // javascript: in data-src is never loaded, even with consent
+      spa.appendChild(frame('analytics', 'anjs', 'javascript:parent.pwned=5'));
+      await tick(300);
+      var anjs = D.getElementById('anjs');
+      check('iframe with data-src javascript: is not loaded', 'no src, no JS', { src: anjs.getAttribute('src'), pwned: p.W.pwned },
+        !anjs.hasAttribute('src') && p.W.pwned === 0);
+
+      await tick(300);
+      var runs = D.querySelectorAll('script[data-fb-run]').length, clones = D.querySelectorAll('script[data-fb-clone]').length;
+      check('own nodes are not re-processed (one clone per script)', 'clones = originals run = script events',
+        { originals: runs, clones: clones, events: p.W.fbEvents.filter(function (e) { return e === 'script'; }).length },
+        runs === clones && clones === p.W.fbEvents.filter(function (e) { return e === 'script'; }).length);
+
+      // Moving an iframe (SPA re-render): one placeholder that follows it; after "Allow and show"
+      // the iframe loads and is visible. Separate page, so the preview above keeps its placeholder.
+      p = await open({});
+      D = p.D; spa = D.getElementById('spa'); spa.className = '';
+      acceptAnalyticsOnly(p);
+      await tick(150);
+      spa.appendChild(frame('marketing', 'mv'));
+      await tick(200);
+      var mv = D.getElementById('mv'), box = D.createElement('div');
+      spa.appendChild(D.createElement('hr'));
+      spa.appendChild(box); box.appendChild(mv);
+      await tick(300);
+      var next = Array.prototype.filter.call(D.querySelectorAll('[data-fb-ph]'), function (x) { return x.nextElementSibling === mv; });
+      check('moved iframe keeps one placeholder next to it', '1 placeholder, right before the iframe',
+        { nextToIframe: next.length, total: D.querySelectorAll('[data-fb-ph]').length }, next.length === 1 && D.querySelectorAll('[data-fb-ph]').length === 1);
+      if (next[0]) next[0].querySelector('button').click();
+      await tick(300);
+      check('after "Allow and show" the moved iframe loads and is visible', 'loaded, display not none, 0 placeholders',
+        { state: mv.getAttribute('src') ? 'loaded' : 'no-src', display: mv.style.display, placeholders: D.querySelectorAll('[data-fb-ph]').length },
+        !!mv.getAttribute('src') && mv.style.display !== 'none' && D.querySelectorAll('[data-fb-ph]').length === 0);
+      p.done();
+    } catch (e) {
+      check('4. content added after load: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
+    try {
+      // ---------- 5. robustness (bugs found by the independent review) ----------
+      group('5. Robustness');
+      p = await open({});
+      D = p.D; spa = D.getElementById('spa'); spa.className = '';
+      var phCount = function () { return D.querySelectorAll('[data-fb-ph]').length; };
+      spa.appendChild(frame('marketing', 'rm1'));
+      await tick(200);
+      D.getElementById('rm1').remove();
+      await tick(200);
+      check('removed iframe takes its placeholder along', '0 placeholders', phCount() + ' placeholders', phCount() === 0);
+      spa.appendChild(frame('marketing', 'rp1'));
+      await tick(200);
+      var rp2 = frame('marketing', 'rp2');
+      D.getElementById('rp1').replaceWith(rp2);
+      await tick(200);
+      check('replaced iframe: one placeholder, next to the new iframe', '1 placeholder, before rp2',
+        { total: phCount(), beforeNew: !!(rp2.previousElementSibling && rp2.previousElementSibling.hasAttribute('data-fb-ph')) },
+        phCount() === 1 && rp2.previousElementSibling && rp2.previousElementSibling.hasAttribute('data-fb-ph'));
+      p.done();
+
+      // non-numeric maxAgeDays: default 180 days for the record and the cookie
+      p = await open({ age: 10, cfg: JSON.stringify({ maxAgeDays: 'abc' }) });
       v = p.W.FrostBanner.getConsent();
-      check('Record ' + age + ' days old is restored', 'restored, no banner', { consent: v && v.analytics === true, banner: !!p.card() },
-        v && v.analytics === true && !p.card());
+      check('maxAgeDays "abc": 10-day-old record is still restored (default 180)', 'restored', { consent: !!v }, !!v);
       p.done();
-    }
-    p = await open({ age: 200 }, '1. Expired consent (200 days): the banner must be shown again');
-    check('Record 200 days old is rejected', 'banner shown, getConsent() = null', { consent: p.W.FrostBanner.getConsent(), banner: !!p.card() },
-      p.W.FrostBanner.getConsent() === null && !!p.card());
-    p = await open({ age: 'none' });
-    check('Record without ts is rejected', 'banner shown', { banner: !!p.card() }, !!p.card());
-    p.done();
-    p = await open({ age: -30 });
-    check('Record with ts 30 days in the future is rejected', 'banner shown', { banner: !!p.card() }, !!p.card());
-    p.done();
-
-    // ---------- 2. XSS ----------
-    group('2. XSS through config values');
-    p = await open({ cfg: JSON.stringify({ accent: EVIL_ACCENT }) }, '2. Malicious accent: default blue buttons, no broken image');
-    var acc = getComputedStyle(p.sr().querySelector('.w')).getPropertyValue('--a').trim();
-    check('accent with </style><img onerror> is ignored', 'no JS, no <img>, accent ' + DEFAULT_ACCENT,
-      { pwned: p.W.pwned, imgs: p.sr().querySelectorAll('img').length, accent: acc },
-      p.W.pwned === 0 && p.sr().querySelectorAll('img').length === 0 && acc === DEFAULT_ACCENT);
-    p = await open({ cfg: JSON.stringify({ accent: '#e0a33a' }) });
-    acc = getComputedStyle(p.sr().querySelector('.w')).getPropertyValue('--a').trim();
-    check('valid accent #e0a33a is applied', '#e0a33a', acc, acc === '#e0a33a');
-    p.done();
-
-    var urls = [
-      ['javascript:window.pwned=3', '#'], ['java\tscript:window.pwned=3', '#'], ['  JavaScript:window.pwned=3', '#'],
-      ['\u0001javascript:window.pwned=3', '#'], ['data:text/html,<script>parent.pwned=4<\/script>', '#'], ['vbscript:x', '#'],
-      ['https://example.com/privacy', 'https://example.com/privacy'], ['/privacy', '/privacy'], ['privacy.html', 'privacy.html'],
-      ['#cookies', '#cookies'], ['//example.com/p', '//example.com/p'],
-      // Unicode spaces are not stripped by the browser: the link must stay a harmless relative path.
-      ['\u00a0javascript:window.pwned=3', null], ['\ufeffjavascript:window.pwned=3', null]
-    ];
-    for (const u of urls) {
-      p = await open({ cfg: JSON.stringify({ policyUrl: u[0] }) });
-      var a = p.sr().querySelector('#fbd a'), href = a && a.getAttribute('href');
-      if (u[1] === null) {
-        check('policyUrl ' + JSON.stringify(u[0]), 'not javascript:, resolves to http(s)', 'href = ' + JSON.stringify(href) + ', protocol ' + (a && a.protocol),
-          a && /^https?:$/.test(a.protocol) && !/^javascript:/i.test(href) && p.W.pwned === 0);
-      } else check('policyUrl ' + JSON.stringify(u[0]), 'href = ' + u[1], 'href = ' + href, href === u[1] && p.W.pwned === 0);
-      p.done();
-    }
-
-    var c = { necessary: ['Necessary', 'n'], analytics: ['Analytics', 'a'] };
-    c[EVIL_KEY] = ['Evil', 'e']; c['Bad-Key'] = ['Bad', 'b'];
-    p = await open({ cfg: JSON.stringify({ categories: ['necessary', 'analytics', EVIL_KEY, 'Bad-Key', 42], texts: { en: { c: c } } }) });
-    p.W.FrostBanner.open(); await tick(100);
-    var sw = Array.prototype.map.call(p.sr().querySelectorAll('[data-c]'), function (x) { return x.getAttribute('data-c'); });
-    var injected = p.sr().querySelectorAll('[onfocus],[autofocus]').length;
-    check('category keys outside ^[a-z_]+$ are dropped', 'switches necessary,analytics; no injected attributes',
-      { switches: sw, injected: injected, pwned: p.W.pwned }, sw.join(',') === 'necessary,analytics' && injected === 0 && p.W.pwned === 0);
-    p.done();
-
-    // ---------- 3. script order ----------
-    group('3. Script order after consent (lib.js + inline script that uses it)');
-    p = await open({});
-    acceptAnalyticsOnly(p);
-    await waitFor(function () { return p.W.order.length >= 4; });
-    var ord = p.W.order.slice();
-    check('lib.js runs before the inline script', 'order starts lib, inline lib=true', ord, ord[0] === 'lib' && ord[1] === 'inline lib=true');
-    check('non-JS data-type does not stall the queue', 'contains "inline after x-template"', ord, ord.indexOf('inline after x-template') > -1);
-    check('nomodule external script does not stall the queue', 'contains "inline after nomodule"', ord, ord.indexOf('inline after nomodule') > -1);
-    await waitFor(function () { return p.W.order.some(function (x) { return /^onload ran/.test(x); }); });
-    var onl = p.W.order.filter(function (x) { return /^onload ran/.test(x); });
-    check('attributes are kept on the script that runs (onload, data-*)', 'onload ran, attr=kept', onl.join('; ') || 'not run', onl[0] === 'onload ran, attr=kept');
-    var libClone = p.D.querySelector('script[data-fb-clone][src="lib.js"]');
-    check('external clone without async attribute has async = false', 'async = false', 'async = ' + (libClone && libClone.async), libClone && libClone.async === false);
-    p.done();
-
-    // ---------- 4. content added after load ----------
-    group('4. Scripts and iframes added after page load');
-    p = await open({}, '4. Marketing iframe added after load: placeholder with "Allow and show"');
-    var D = p.D, spa = D.getElementById('spa');
-    spa.className = '';
-    var blocked = function (cat, code) { var s = D.createElement('script'); s.type = 'text/plain'; s.setAttribute('data-category', cat); s.text = code; return s; };
-    // Local frame only: the check makes no requests to third parties.
-    var frame = function (cat, id, src) { var i = D.createElement('iframe'); i.id = id; i.width = 300; i.height = 140; i.setAttribute('data-category', cat);
-      i.setAttribute('data-src', src || 'frame.html#' + id); return i; };
-    var fstate = function (id) { var i = D.getElementById(id), ph = i.previousElementSibling;
-      return (i.getAttribute('src') ? 'loaded' : 'no-src') + (ph && ph.hasAttribute('data-fb-ph') ? '+placeholder' : ''); };
-
-    spa.appendChild(frame('marketing', 'mk1'));
-    spa.appendChild(blocked('analytics', "order.push('dyn before decision')"));
-    await tick(150);
-    check('iframe added before a decision gets a placeholder', 'no-src+placeholder', fstate('mk1'), fstate('mk1') === 'no-src+placeholder');
-    check('script added before a decision does not run', 'not run', p.W.order.indexOf('dyn before decision') > -1 ? 'ran' : 'not run', p.W.order.indexOf('dyn before decision') === -1);
-
-    acceptAnalyticsOnly(p);
-    await waitFor(function () { return p.W.order.indexOf('dyn before decision') > -1; });
-    check('that script runs once analytics is accepted', 'ran', p.W.order.indexOf('dyn before decision') > -1 ? 'ran' : 'not run', p.W.order.indexOf('dyn before decision') > -1);
-
-    spa.appendChild(blocked('analytics', "order.push('dyn analytics')"));
-    spa.appendChild(blocked('marketing', "order.push('dyn MARKETING')"));
-    spa.appendChild(frame('analytics', 'an1'));
-    var sec = D.createElement('section');
-    sec.appendChild(blocked('analytics', "order.push('dyn nested')"));
-    sec.appendChild(frame('marketing', 'mk2'));
-    spa.appendChild(sec);
-    await tick(300);
-    var o = p.W.order;
-    check('new analytics script runs', 'ran', o.indexOf('dyn analytics') > -1 ? 'ran' : 'not run', o.indexOf('dyn analytics') > -1);
-    check('new marketing script does not run (not accepted)', 'not run', o.indexOf('dyn MARKETING') > -1 ? 'ran' : 'not run', o.indexOf('dyn MARKETING') === -1);
-    check('script inside an added <section> runs', 'ran', o.indexOf('dyn nested') > -1 ? 'ran' : 'not run', o.indexOf('dyn nested') > -1);
-    check('new analytics iframe loads', 'loaded', fstate('an1'), fstate('an1') === 'loaded');
-    check('new marketing iframe gets a placeholder', 'no-src+placeholder', fstate('mk2'), fstate('mk2') === 'no-src+placeholder');
-
-    // javascript: in data-src is never loaded, even with consent
-    spa.appendChild(frame('analytics', 'anjs', 'javascript:parent.pwned=5'));
-    await tick(300);
-    var anjs = D.getElementById('anjs');
-    check('iframe with data-src javascript: is not loaded', 'no src, no JS', { src: anjs.getAttribute('src'), pwned: p.W.pwned },
-      !anjs.hasAttribute('src') && p.W.pwned === 0);
-
-    await tick(300);
-    var runs = D.querySelectorAll('script[data-fb-run]').length, clones = D.querySelectorAll('script[data-fb-clone]').length;
-    check('own nodes are not re-processed (one clone per script)', 'clones = originals run = script events',
-      { originals: runs, clones: clones, events: p.W.fbEvents.filter(function (e) { return e === 'script'; }).length },
-      runs === clones && clones === p.W.fbEvents.filter(function (e) { return e === 'script'; }).length);
-
-    // Moving an iframe (SPA re-render): one placeholder that follows it; after "Allow and show"
-    // the iframe loads and is visible. Separate page, so the preview above keeps its placeholder.
-    p = await open({});
-    D = p.D; spa = D.getElementById('spa'); spa.className = '';
-    acceptAnalyticsOnly(p);
-    await tick(150);
-    spa.appendChild(frame('marketing', 'mv'));
-    await tick(200);
-    var mv = D.getElementById('mv'), box = D.createElement('div');
-    spa.appendChild(D.createElement('hr'));
-    spa.appendChild(box); box.appendChild(mv);
-    await tick(300);
-    var next = Array.prototype.filter.call(D.querySelectorAll('[data-fb-ph]'), function (x) { return x.nextElementSibling === mv; });
-    check('moved iframe keeps one placeholder next to it', '1 placeholder, right before the iframe',
-      { nextToIframe: next.length, total: D.querySelectorAll('[data-fb-ph]').length }, next.length === 1 && D.querySelectorAll('[data-fb-ph]').length === 1);
-    if (next[0]) next[0].querySelector('button').click();
-    await tick(300);
-    check('after "Allow and show" the moved iframe loads and is visible', 'loaded, display not none, 0 placeholders',
-      { state: mv.getAttribute('src') ? 'loaded' : 'no-src', display: mv.style.display, placeholders: D.querySelectorAll('[data-fb-ph]').length },
-      !!mv.getAttribute('src') && mv.style.display !== 'none' && D.querySelectorAll('[data-fb-ph]').length === 0);
-    p.done();
-
-    // ---------- 5. robustness (bugs found by the independent review) ----------
-    group('5. Robustness');
-    p = await open({});
-    D = p.D; spa = D.getElementById('spa'); spa.className = '';
-    var phCount = function () { return D.querySelectorAll('[data-fb-ph]').length; };
-    spa.appendChild(frame('marketing', 'rm1'));
-    await tick(200);
-    D.getElementById('rm1').remove();
-    await tick(200);
-    check('removed iframe takes its placeholder along', '0 placeholders', phCount() + ' placeholders', phCount() === 0);
-    spa.appendChild(frame('marketing', 'rp1'));
-    await tick(200);
-    var rp2 = frame('marketing', 'rp2');
-    D.getElementById('rp1').replaceWith(rp2);
-    await tick(200);
-    check('replaced iframe: one placeholder, next to the new iframe', '1 placeholder, before rp2',
-      { total: phCount(), beforeNew: !!(rp2.previousElementSibling && rp2.previousElementSibling.hasAttribute('data-fb-ph')) },
-      phCount() === 1 && rp2.previousElementSibling && rp2.previousElementSibling.hasAttribute('data-fb-ph'));
-    p.done();
-
-    // non-numeric maxAgeDays: default 180 days for the record and the cookie
-    p = await open({ age: 10, cfg: JSON.stringify({ maxAgeDays: 'abc' }) });
-    v = p.W.FrostBanner.getConsent();
-    check('maxAgeDays "abc": 10-day-old record is still restored (default 180)', 'restored', { consent: !!v }, !!v);
-    p.done();
-    p = await open({ age: 200, cfg: JSON.stringify({ maxAgeDays: -5 }) });
-    check('maxAgeDays -5: 200-day-old record is rejected (default 180)', 'banner shown', { banner: !!p.card() }, !!p.card());
-    p.W.FrostBanner.open();
-    p.sr().querySelector('button[data-a="reject"]').click();
-    var ck = p.W.cookieStore ? await p.W.cookieStore.get('fb_consent') : null;
-    var days = ck && ck.expires ? Math.round((ck.expires - Date.now()) / 864e5) : null;
-    check('maxAgeDays -5: consent cookie is persistent, 180 days', 'expires in 180 days', 'expires in ' + days + ' days', days === 180);
-    p.done();
-
-    // malformed custom texts must not break the banner
-    for (const tx of [null, 'x', { en: null }, { en: 'x' }, { en: { c: null, title: 5, embed: null } }, { en: { c: { analytics: 'oops' } } }]) {
-      p = await open({ cfg: JSON.stringify({ texts: tx }) });
-      var okMain = !!p.card() && !/undefined|null|\[object/.test(p.sr().querySelector('.card').textContent);
-      var okPrefs = false;
-      try { p.W.FrostBanner.open(); okPrefs = p.sr().querySelectorAll('[data-c]').length >= 1; } catch (e) { okPrefs = false; }
-      check('texts ' + JSON.stringify(tx) + ': banner and preferences render', 'banner + switches, no "undefined"', { banner: okMain, prefs: okPrefs }, okMain && okPrefs);
-      p.done();
-    }
-
-    // container: invalid selector or missing element -> banner on the page, no exception
-    for (const sel of ['###', '#does-not-exist']) {
-      p = await open({ cfg: JSON.stringify({ container: sel }) });
-      var hostEl = p.D.getElementById('frostbanner');
-      var fixedPos = p.card() ? getComputedStyle(p.card().parentElement).position : null;
-      check('container ' + JSON.stringify(sel) + ': banner shown on the page', 'banner in <body>, position fixed',
-        { banner: !!p.card(), parent: hostEl && hostEl.parentElement.tagName, position: fixedPos },
-        !!p.card() && hostEl.parentElement === p.D.body && fixedPos === 'fixed');
-      p.done();
-    }
-    p = await open({ cfg: JSON.stringify({ container: '#spa' }) });
-    var inSpa = p.D.getElementById('frostbanner');
-    check('valid container "#spa": banner rendered inside it', 'host inside #spa', inSpa && inSpa.parentElement.id, !!inSpa && inSpa.parentElement.id === 'spa');
-    p.done();
-
-    // withdrawal: a category whose scripts already ran -> page reload (unless reloadOnWithdraw: false)
-    async function withdrawAnalytics(cfgExtra) {
-      var pp = await open(cfgExtra ? { cfg: JSON.stringify(cfgExtra) } : {});
-      acceptAnalyticsOnly(pp);
-      await waitFor(function () { return pp.W.order.indexOf('lib') > -1; });
-      pp.W.__beforeWithdraw = true;
-      var reloadEvt = false;
-      pp.W.addEventListener('frostbanner:reload', function () { reloadEvt = true; });
-      pp.W.FrostBanner.open();
-      pp.sr().querySelector('input[data-c="analytics"]').click();   // switch analytics off
-      pp.sr().querySelector('button[data-a="save"]').click();
-      await tick(800);
-      var W2 = pp.f.contentWindow, c2 = W2.FrostBanner.getConsent();
-      return { pp: pp, reloaded: !W2.__beforeWithdraw, reloadEvt: reloadEvt, analytics: c2 && c2.analytics,
-        banner: !!(W2.document.getElementById('frostbanner') && W2.document.getElementById('frostbanner').shadowRoot.querySelector('.card')),
-        ranAfter: W2.order ? W2.order.indexOf('lib') > -1 : null };
-    }
-    var wd = await withdrawAnalytics();
-    check('withdrawing analytics after its scripts ran reloads the page', 'reloaded, analytics off, no banner, scripts not run again',
-      { reloaded: wd.reloaded, event: wd.reloadEvt, analytics: wd.analytics, banner: wd.banner, ranAfter: wd.ranAfter },
-      wd.reloaded && wd.reloadEvt && wd.analytics === false && !wd.banner && wd.ranAfter === false);
-    wd.pp.done();
-    wd = await withdrawAnalytics({ reloadOnWithdraw: false });
-    check('reloadOnWithdraw: false keeps the page', 'not reloaded, analytics off', { reloaded: wd.reloaded, analytics: wd.analytics },
-      !wd.reloaded && wd.analytics === false);
-    wd.pp.done();
-
-    // ---------- 6. keyboard and focus ----------
-    group('6. Keyboard and focus');
-    var key = function (pp, k, shift) {
-      var el = pp.sr().activeElement || pp.sr().querySelector('.card');
-      el.dispatchEvent(new pp.W.KeyboardEvent('keydown', { key: k, shiftKey: !!shift, bubbles: true, composed: true, cancelable: true }));
-    };
-    var label = function (el) { return el ? (el.getAttribute('data-a') || el.getAttribute('data-c') || el.tagName) : 'none'; };
-    p = await open({ cfg: JSON.stringify({ layout: 'center' }) }, '6. Centre layout (modal): focus starts on the first button');
-    var foc = p.sr().querySelectorAll('.card button, .card a[href]');
-    check('modal: focus starts inside the card', 'first button (reject) focused', label(p.sr().activeElement), p.sr().activeElement === p.sr().querySelector('.card button'));
-    foc[foc.length - 1].focus(); key(p, 'Tab');
-    check('modal: Tab on the last control wraps to the first', label(foc[0]), label(p.sr().activeElement), p.sr().activeElement === foc[0]);
-    key(p, 'Tab', true);
-    check('modal: Shift+Tab on the first control wraps to the last', label(foc[foc.length - 1]), label(p.sr().activeElement), p.sr().activeElement === foc[foc.length - 1]);
-    key(p, 'Escape');
-    check('Escape on the main banner keeps it (a choice is required)', 'banner still shown', { banner: !!p.card() }, !!p.card());
-    var acc2 = p.sr().querySelector('button[data-a="accept"]'); acc2.focus(); acc2.click();
-    await tick(100);
-    check('after a choice in the banner, focus moves to the floating button', 'fab', label(p.sr().activeElement), label(p.sr().activeElement) === 'fab');
-    p.W.FrostBanner.open(); await tick(50);
-    key(p, 'Escape'); await tick(50);
-    check('Escape in preferences opened later returns to the floating button', 'fab focused', label(p.sr().activeElement), label(p.sr().activeElement) === 'fab');
-    p = await open({});
-    p.sr().querySelector('button[data-a="prefs"]').click(); await tick(50);
-    key(p, 'Escape'); await tick(50);
-    check('Escape in preferences before a choice returns to the banner, focus on its first button', 'main view, button focused',
-      { main: !!p.sr().querySelector('.card.m'), focused: label(p.sr().activeElement) },
-      !!p.sr().querySelector('.card.m') && !!p.sr().activeElement && p.sr().activeElement.tagName === 'BUTTON');
-    p.done();
-
-    // ---------- 7. consent log ----------
-    group('7. Consent log');
-    async function logOf(cfgExtra) {
-      var pp = await open(cfgExtra ? { cfg: JSON.stringify(cfgExtra) } : {}), rec = null;
-      pp.W.FrostBanner.on('log', function (x) { rec = x; });
-      pp.sr().querySelector('button[data-a="reject"]').click();
-      await tick(50); pp.done(); return rec;
-    }
-    var l1 = await logOf(), l2 = await logOf(), l3 = await logOf({ texts: { en: { title: 'Another title' } } }), l4 = await logOf({ lang: 'de' });
-    check('log record has language and text fingerprint', 'lang en, text_hash 8 hex', { lang: l1 && l1.lang, text_hash: l1 && l1.text_hash },
-      l1 && l1.lang === 'en' && /^[0-9a-f]{8}$/.test(l1.text_hash));
-    check('same banner gives the same fingerprint', l1 && l1.text_hash, l2 && l2.text_hash, l1 && l2 && l1.text_hash === l2.text_hash);
-    check('changed wording gives a different fingerprint', 'differs from ' + (l1 && l1.text_hash), l3 && l3.text_hash, l1 && l3 && l1.text_hash !== l3.text_hash);
-    check('German banner: lang de, different fingerprint', 'lang de', { lang: l4 && l4.lang, text_hash: l4 && l4.text_hash },
-      l4 && l4.lang === 'de' && l4.text_hash !== l1.text_hash);
-
-    // ---------- 8. Google Consent Mode ----------
-    group('8. Google Consent Mode');
-    var dl = function (pp, a, b) { return Array.prototype.filter.call(pp.W.dataLayer, function (e) { return e[0] === a && e[1] === b; }).map(function (e) { return e[2]; }); };
-    p = await open({});
-    var defs = dl(p, 'consent', 'default');
-    check('default: one Consent Mode default, all denied, wait 500, no region', '1 default, ad_storage denied, wait 500',
-      defs, defs.length === 1 && defs[0].ad_storage === 'denied' && defs[0].analytics_storage === 'denied' && defs[0].wait_for_update === 500 && !defs[0].region);
-    check('default: no ads_data_redaction / url_passthrough', 'none', dl(p, 'set', 'ads_data_redaction').concat(dl(p, 'set', 'url_passthrough')),
-      dl(p, 'set', 'ads_data_redaction').length === 0 && dl(p, 'set', 'url_passthrough').length === 0);
-    p.done();
-    p = await open({ cfg: JSON.stringify({ consentMode: { region: ['ES', 'pt-PT', 'bad region!', 7], waitForUpdate: 1500, adsDataRedaction: true, urlPassthrough: true } }) });
-    defs = dl(p, 'consent', 'default');
-    check('region: granted default everywhere, denied default for the listed regions', '2 defaults, second denied for ES, pt-PT',
-      defs, defs.length === 2 && defs[0].ad_storage === 'granted' && !defs[0].region &&
-        defs[1].ad_storage === 'denied' && JSON.stringify(defs[1].region) === '["ES","pt-PT"]' && defs[1].wait_for_update === 1500);
-    check('adsDataRedaction / urlPassthrough are set', 'both true', { redaction: dl(p, 'set', 'ads_data_redaction'), passthrough: dl(p, 'set', 'url_passthrough') },
-      dl(p, 'set', 'ads_data_redaction')[0] === true && dl(p, 'set', 'url_passthrough')[0] === true);
-    p.done();
-    p = await open({ cfg: JSON.stringify({ consentMode: { waitForUpdate: 'abc' } }) });
-    defs = dl(p, 'consent', 'default');
-    check('invalid waitForUpdate falls back to 500', 'wait 500', defs[0] && defs[0].wait_for_update, defs.length === 1 && defs[0].wait_for_update === 500);
-    p.done();
-
-    // ---------- 9. asking again on purpose: consentVersion ----------
-    group('9. consentVersion');
-    p = await open({ age: 10 });
-    check('record without cv is valid for consentVersion 1 (default)', 'restored', { consent: !!p.W.FrostBanner.getConsent() }, !!p.W.FrostBanner.getConsent());
-    p.done();
-    p = await open({ age: 10, cfg: JSON.stringify({ consentVersion: 2 }) });
-    check('consentVersion 2: an older record asks again', 'banner shown', { banner: !!p.card(), consent: p.W.FrostBanner.getConsent() }, !!p.card() && p.W.FrostBanner.getConsent() === null);
-    var lg = null; p.W.FrostBanner.on('log', function (x) { lg = x; });
-    p.sr().querySelector('button[data-a="accept"]').click();
-    var recCv = JSON.parse(p.W.localStorage.getItem('fb_consent') || '{}').cv;
-    check('the new record and the log carry consent version 2', 'cv 2, consent_version 2', { cv: recCv, log: lg && lg.consent_version }, recCv === 2 && lg && lg.consent_version === 2);
-    p.done();
-    p = await open({ age: 10, cfg: JSON.stringify({ consentVersion: 'x' }) });
-    check('invalid consentVersion counts as 1', 'restored', { consent: !!p.W.FrostBanner.getConsent() }, !!p.W.FrostBanner.getConsent());
-    p.done();
-
-    // ---------- 10. translations ----------
-    group('10. Translations');
-    p = await open({});
-    var langs = p.W.FrostBanner.languages || [];
-    p.done();
-    check('29 built-in languages', '29', langs.length + ': ' + langs.join(' '), langs.length === 29);
-    var enTitle = null, badLangs = [];
-    for (const lg2 of langs) {
-      p = await open({ cfg: JSON.stringify({ lang: lg2 }) });
-      var card = p.card(), txt = card ? card.textContent : '';
-      var title = card && card.querySelector('#fbt') ? card.querySelector('#fbt').textContent : '';
+      p = await open({ age: 200, cfg: JSON.stringify({ maxAgeDays: -5 }) });
+      check('maxAgeDays -5: 200-day-old record is rejected (default 180)', 'banner shown', { banner: !!p.card() }, !!p.card());
       p.W.FrostBanner.open();
-      var sw2 = p.sr().querySelectorAll('[data-c]').length, ptxt = p.sr().querySelector('.card').textContent;
-      if (lg2 === 'en') enTitle = title;
-      var probs = [];
-      if (!title) probs.push('no title');
-      if (/undefined|null|\[object/.test(txt + ptxt)) probs.push('undefined text');
-      if (sw2 !== 4) probs.push(sw2 + ' switches');
-      if (lg2 !== 'en' && enTitle && title === enTitle) probs.push('English title');
-      if (probs.length) badLangs.push(lg2 + ': ' + probs.join(', '));
+      p.sr().querySelector('button[data-a="reject"]').click();
+      var ck = p.W.cookieStore ? await p.W.cookieStore.get('fb_consent') : null;
+      var days = ck && ck.expires ? Math.round((ck.expires - Date.now()) / 864e5) : null;
+      check('maxAgeDays -5: consent cookie is persistent, 180 days', 'expires in 180 days', 'expires in ' + days + ' days', days === 180);
       p.done();
+
+      // malformed custom texts must not break the banner
+      for (const tx of [null, 'x', { en: null }, { en: 'x' }, { en: { c: null, title: 5, embed: null } }, { en: { c: { analytics: 'oops' } } }]) {
+        p = await open({ cfg: JSON.stringify({ texts: tx }) });
+        var okMain = !!p.card() && !/undefined|null|\[object/.test(p.sr().querySelector('.card').textContent);
+        var okPrefs = false;
+        try { p.W.FrostBanner.open(); okPrefs = p.sr().querySelectorAll('[data-c]').length >= 1; } catch (e) { okPrefs = false; }
+        check('texts ' + JSON.stringify(tx) + ': banner and preferences render', 'banner + switches, no "undefined"', { banner: okMain, prefs: okPrefs }, okMain && okPrefs);
+        p.done();
+      }
+
+      // container: invalid selector or missing element -> banner on the page, no exception
+      for (const sel of ['###', '#does-not-exist']) {
+        p = await open({ cfg: JSON.stringify({ container: sel }) });
+        var hostEl = p.D.getElementById('frostbanner');
+        var fixedPos = p.card() ? getComputedStyle(p.card().parentElement).position : null;
+        check('container ' + JSON.stringify(sel) + ': banner shown on the page', 'banner in <body>, position fixed',
+          { banner: !!p.card(), parent: hostEl && hostEl.parentElement.tagName, position: fixedPos },
+          !!p.card() && hostEl.parentElement === p.D.body && fixedPos === 'fixed');
+        p.done();
+      }
+      p = await open({ cfg: JSON.stringify({ container: '#spa' }) });
+      var inSpa = p.D.getElementById('frostbanner');
+      check('valid container "#spa": banner rendered inside it', 'host inside #spa', inSpa && inSpa.parentElement.id, !!inSpa && inSpa.parentElement.id === 'spa');
+      p.done();
+
+      // withdrawal: a category whose scripts already ran -> page reload (unless reloadOnWithdraw: false)
+      async function withdrawAnalytics(cfgExtra) {
+        var pp = await open(cfgExtra ? { cfg: JSON.stringify(cfgExtra) } : {});
+        acceptAnalyticsOnly(pp);
+        await waitFor(function () { return pp.W.order.indexOf('lib') > -1; });
+        pp.W.__beforeWithdraw = true;
+        var reloadEvt = false;
+        pp.W.addEventListener('frostbanner:reload', function () { reloadEvt = true; });
+        pp.W.FrostBanner.open();
+        pp.sr().querySelector('input[data-c="analytics"]').click();   // switch analytics off
+        pp.sr().querySelector('button[data-a="save"]').click();
+        await tick(800);
+        var W2 = pp.f.contentWindow, c2 = W2.FrostBanner.getConsent();
+        return { pp: pp, reloaded: !W2.__beforeWithdraw, reloadEvt: reloadEvt, analytics: c2 && c2.analytics,
+          banner: !!(W2.document.getElementById('frostbanner') && W2.document.getElementById('frostbanner').shadowRoot.querySelector('.card')),
+          ranAfter: W2.order ? W2.order.indexOf('lib') > -1 : null };
+      }
+      var wd = await withdrawAnalytics();
+      check('withdrawing analytics after its scripts ran reloads the page', 'reloaded, analytics off, no banner, scripts not run again',
+        { reloaded: wd.reloaded, event: wd.reloadEvt, analytics: wd.analytics, banner: wd.banner, ranAfter: wd.ranAfter },
+        wd.reloaded && wd.reloadEvt && wd.analytics === false && !wd.banner && wd.ranAfter === false);
+      wd.pp.done();
+      wd = await withdrawAnalytics({ reloadOnWithdraw: false });
+      check('reloadOnWithdraw: false keeps the page', 'not reloaded, analytics off', { reloaded: wd.reloaded, analytics: wd.analytics },
+        !wd.reloaded && wd.analytics === false);
+      wd.pp.done();
+    } catch (e) {
+      check('5. robustness (bugs found by the independent review): group stopped by an exception', 'no exception', String(e && e.message || e), false);
     }
-    check('every language renders a complete banner and preferences', 'no problems', badLangs.length ? badLangs : 'all ' + langs.length + ' ok', langs.length === 29 && badLangs.length === 0);
 
-    // ---------- 11. build and version ----------
-    group('11. Build and version');
-    p = await open({});
-    var apiVer = p.W.FrostBanner.version;
-    p.done();
-    var bundleUrl = new URLSearchParams(location.search).get('bundle') || '../dist/fb.min.js';
-    var head = await fetch(bundleUrl, { cache: 'no-store' }).then(function (r) { return r.text(); }).then(function (s) { return s.slice(0, 120); }).catch(function () { return ''; });
-    var hv = (head.match(/FrostBanner v(\d+\.\d+\.\d+)/) || [])[1];
-    check('bundle header version = FrostBanner.version', apiVer, 'header ' + hv + ', API ' + apiVer, !!apiVer && hv === apiVer);
-    var pkg = await fetch('../package.json', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
-    check('package.json version = FrostBanner.version, build script present', apiVer + ', npm run build',
-      pkg ? { version: pkg.version, build: pkg.scripts && pkg.scripts.build } : 'no package.json',
-      !!pkg && pkg.version === apiVer && /terser src\/fb\.js/.test(pkg.scripts && pkg.scripts.build || ''));
-
-    var chlog = await fetch('../CHANGELOG.md', { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).catch(function () { return ''; });
-    var hasEntry = chlog.indexOf('## [' + apiVer + ']') > -1;
-    check('CHANGELOG.md has an entry for FrostBanner.version', '## [' + apiVer + ']', chlog ? (hasEntry ? 'found' : 'missing') : 'no CHANGELOG.md', hasEntry);
-
-    // ---------- 12. README images ----------
-    group('12. README images');
-    var readme = await fetch('../README.md', { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).catch(function () { return ''; });
-    var imgs = (readme.match(/(?:\]\(|src=")(docs\/[^)"\s]+)/g) || []).map(function (m) { return m.replace(/^(\]\(|src=")/, ''); });
-    var imgRes = [];
-    for (const src of imgs) {
-      var res = await fetch('../' + src, { cache: 'no-store' }).catch(function () { return null; });
-      var blob = res && res.ok ? await res.blob() : null;
-      var decoded = false;
-      if (blob) { try { var bmp = await createImageBitmap(blob); decoded = bmp.width > 0; } catch (e) { decoded = false; } }
-      imgRes.push({ src: src, kb: blob ? Math.round(blob.size / 1024) : null, decoded: decoded });
+    try {
+      // ---------- 6. keyboard and focus ----------
+      group('6. Keyboard and focus');
+      var key = function (pp, k, shift) {
+        var el = pp.sr().activeElement || pp.sr().querySelector('.card');
+        el.dispatchEvent(new pp.W.KeyboardEvent('keydown', { key: k, shiftKey: !!shift, bubbles: true, composed: true, cancelable: true }));
+      };
+      var label = function (el) { return el ? (el.getAttribute('data-a') || el.getAttribute('data-c') || el.tagName) : 'none'; };
+      p = await open({ cfg: JSON.stringify({ layout: 'center' }) }, '6. Centre layout (modal): focus starts on the first button');
+      var foc = p.sr().querySelectorAll('.card button, .card a[href]');
+      check('modal: focus starts inside the card', 'first button (reject) focused', label(p.sr().activeElement), p.sr().activeElement === p.sr().querySelector('.card button'));
+      foc[foc.length - 1].focus(); key(p, 'Tab');
+      check('modal: Tab on the last control wraps to the first', label(foc[0]), label(p.sr().activeElement), p.sr().activeElement === foc[0]);
+      key(p, 'Tab', true);
+      check('modal: Shift+Tab on the first control wraps to the last', label(foc[foc.length - 1]), label(p.sr().activeElement), p.sr().activeElement === foc[foc.length - 1]);
+      key(p, 'Escape');
+      check('Escape on the main banner keeps it (a choice is required)', 'banner still shown', { banner: !!p.card() }, !!p.card());
+      var acc2 = p.sr().querySelector('button[data-a="accept"]'); acc2.focus(); acc2.click();
+      await tick(100);
+      check('after a choice in the banner, focus moves to the floating button', 'fab', label(p.sr().activeElement), label(p.sr().activeElement) === 'fab');
+      p.W.FrostBanner.open(); await tick(50);
+      key(p, 'Escape'); await tick(50);
+      check('Escape in preferences opened later returns to the floating button', 'fab focused', label(p.sr().activeElement), label(p.sr().activeElement) === 'fab');
+      p = await open({});
+      p.sr().querySelector('button[data-a="prefs"]').click(); await tick(50);
+      key(p, 'Escape'); await tick(50);
+      check('Escape in preferences before a choice returns to the banner, focus on its first button', 'main view, button focused',
+        { main: !!p.sr().querySelector('.card.m'), focused: label(p.sr().activeElement) },
+        !!p.sr().querySelector('.card.m') && !!p.sr().activeElement && p.sr().activeElement.tagName === 'BUTTON');
+      p.done();
+    } catch (e) {
+      check('6. keyboard and focus: group stopped by an exception', 'no exception', String(e && e.message || e), false);
     }
-    check('every image in the README loads and decodes', 'all ok', imgRes, imgRes.length >= 3 && imgRes.every(function (x) { return x.decoded; }));
-    check('README images are light (each under 150 KB)', 'all < 150 KB', imgRes.map(function (x) { return x.src + ' ' + x.kb + ' KB'; }),
-      imgRes.length >= 3 && imgRes.every(function (x) { return x.kb !== null && x.kb < 150; }));
 
-    // ---------- 13. public API ----------
-    group('13. Public API');
-    p = await open({}, '13. configure({ template: "midnight", accent: "#e0a33a" }): dark banner with orange buttons');
-    var api = p.W.FrostBanner;
-    check('API methods documented in the README exist', 'open, show, configure, getConsent, on, reset, templates, languages, version',
-      ['open', 'show', 'configure', 'getConsent', 'on', 'reset'].filter(function (m) { return typeof api[m] !== 'function'; }).concat(
-        Array.isArray(api.templates) && api.templates.length === 14 ? [] : ['templates']).concat(typeof api.version === 'string' ? [] : ['version']),
-      ['open', 'show', 'configure', 'getConsent', 'on', 'reset'].every(function (m) { return typeof api[m] === 'function'; }) &&
-        Array.isArray(api.templates) && api.templates.length === 14 && typeof api.version === 'string');
-    api.configure({ template: 'midnight', accent: '#e0a33a' });
-    await tick(100);
-    var wcls = p.sr().querySelector('.w');
-    check('configure() redraws with the new template and accent', 'dark theme, accent #e0a33a',
-      { dark: wcls.classList.contains('dark'), accent: getComputedStyle(wcls).getPropertyValue('--a').trim() },
-      wcls.classList.contains('dark') && getComputedStyle(wcls).getPropertyValue('--a').trim() === '#e0a33a');
-    p.sr().querySelector('button[data-a="reject"]').click();
-    api.show(); await tick(100);
-    check('show() brings the banner back after a choice', 'main banner shown', { main: !!p.sr().querySelector('.card.m') }, !!p.sr().querySelector('.card.m'));
-    p = await open({ cfg: JSON.stringify({ layout: 'chat' }) });
-    check('chat layout renders (typing indicator code path)', 'banner card present', { card: !!p.card() }, !!p.card());
-    await tick(1000);
-    check('chat layout: typing indicator ends after ~0.9 s', 'no .typing', { typing: !!p.sr().querySelector('.typing') }, !p.sr().querySelector('.typing'));
-    p.sr().querySelector('button[data-a="accept"]').click();
-    var fab = p.sr().querySelector('.fab');
-    check('floating button has the "Cookie settings" label', 'aria-label = title = Cookie settings',
-      fab ? { label: fab.getAttribute('aria-label'), title: fab.getAttribute('title') } : 'no fab',
-      fab && fab.getAttribute('aria-label') === 'Cookie settings' && fab.getAttribute('title') === 'Cookie settings');
-    p.done();
-
-    // ---------- 14. Global Privacy Control ----------
-    group('14. Global Privacy Control');
-    async function gpcCase(params, how) {
-      var pp = await open(params), rec = null;
-      pp.W.FrostBanner.on('log', function (x) { rec = x; });
-      if (how === 'accept') pp.sr().querySelector('button[data-a="accept"]').click();
-      else { pp.W.FrostBanner.open(); pp.sr().querySelector('input[data-c="marketing"]').click(); pp.sr().querySelector('button[data-a="save"]').click(); }
-      var cc = pp.W.FrostBanner.getConsent(); pp.done();
-      return { marketing: cc && cc.marketing, analytics: cc && cc.analytics, gpc: rec && rec.gpc };
+    try {
+      // ---------- 7. consent log ----------
+      group('7. Consent log');
+      async function logOf(cfgExtra) {
+        var pp = await open(cfgExtra ? { cfg: JSON.stringify(cfgExtra) } : {}), rec = null;
+        pp.W.FrostBanner.on('log', function (x) { rec = x; });
+        pp.sr().querySelector('button[data-a="reject"]').click();
+        await tick(50); pp.done(); return rec;
+      }
+      var l1 = await logOf(), l2 = await logOf(), l3 = await logOf({ texts: { en: { title: 'Another title' } } }), l4 = await logOf({ lang: 'de' });
+      check('log record has language and text fingerprint', 'lang en, text_hash 8 hex', { lang: l1 && l1.lang, text_hash: l1 && l1.text_hash },
+        l1 && l1.lang === 'en' && /^[0-9a-f]{8}$/.test(l1.text_hash));
+      check('same banner gives the same fingerprint', l1 && l1.text_hash, l2 && l2.text_hash, l1 && l2 && l1.text_hash === l2.text_hash);
+      check('changed wording gives a different fingerprint', 'differs from ' + (l1 && l1.text_hash), l3 && l3.text_hash, l1 && l3 && l1.text_hash !== l3.text_hash);
+      check('German banner: lang de, different fingerprint', 'lang de', { lang: l4 && l4.lang, text_hash: l4 && l4.text_hash },
+        l4 && l4.lang === 'de' && l4.text_hash !== l1.text_hash);
+    } catch (e) {
+      check('7. consent log: group stopped by an exception', 'no exception', String(e && e.message || e), false);
     }
-    var g1 = await gpcCase({}, 'accept');
-    check('no GPC: "Accept all" includes marketing', 'marketing on, no gpc flag', g1, g1.marketing === true && g1.analytics === true && !g1.gpc);
-    var g2 = await gpcCase({ gpc: '1' }, 'accept');
-    check('GPC: "Accept all" leaves marketing off, logged with gpc', 'marketing off, analytics on, gpc true', g2, g2.marketing === false && g2.analytics === true && g2.gpc === true);
-    var g3 = await gpcCase({ gpc: '1' }, 'prefs');
-    check('GPC: marketing switched on explicitly in the preferences is allowed', 'marketing on', g3, g3.marketing === true);
-    var g4 = await gpcCase({ gpc: '1', cfg: JSON.stringify({ respectGpc: false }) }, 'accept');
-    check('GPC with respectGpc: false: "Accept all" includes marketing', 'marketing on', g4, g4.marketing === true && !g4.gpc);
+
+    try {
+      // ---------- 8. Google Consent Mode ----------
+      group('8. Google Consent Mode');
+      var dl = function (pp, a, b) { return Array.prototype.filter.call(pp.W.dataLayer, function (e) { return e[0] === a && e[1] === b; }).map(function (e) { return e[2]; }); };
+      p = await open({});
+      var defs = dl(p, 'consent', 'default');
+      check('default: one Consent Mode default, all denied, wait 500, no region', '1 default, ad_storage denied, wait 500',
+        defs, defs.length === 1 && defs[0].ad_storage === 'denied' && defs[0].analytics_storage === 'denied' && defs[0].wait_for_update === 500 && !defs[0].region);
+      check('default: no ads_data_redaction / url_passthrough', 'none', dl(p, 'set', 'ads_data_redaction').concat(dl(p, 'set', 'url_passthrough')),
+        dl(p, 'set', 'ads_data_redaction').length === 0 && dl(p, 'set', 'url_passthrough').length === 0);
+      p.done();
+      p = await open({ cfg: JSON.stringify({ consentMode: { region: ['ES', 'pt-PT', 'bad region!', 7], waitForUpdate: 1500, adsDataRedaction: true, urlPassthrough: true } }) });
+      defs = dl(p, 'consent', 'default');
+      check('region: granted default everywhere, denied default for the listed regions', '2 defaults, second denied for ES, pt-PT',
+        defs, defs.length === 2 && defs[0].ad_storage === 'granted' && !defs[0].region &&
+          defs[1].ad_storage === 'denied' && JSON.stringify(defs[1].region) === '["ES","pt-PT"]' && defs[1].wait_for_update === 1500);
+      check('adsDataRedaction / urlPassthrough are set', 'both true', { redaction: dl(p, 'set', 'ads_data_redaction'), passthrough: dl(p, 'set', 'url_passthrough') },
+        dl(p, 'set', 'ads_data_redaction')[0] === true && dl(p, 'set', 'url_passthrough')[0] === true);
+      p.done();
+      p = await open({ cfg: JSON.stringify({ consentMode: { waitForUpdate: 'abc' } }) });
+      defs = dl(p, 'consent', 'default');
+      check('invalid waitForUpdate falls back to 500', 'wait 500', defs[0] && defs[0].wait_for_update, defs.length === 1 && defs[0].wait_for_update === 500);
+      p.done();
+    } catch (e) {
+      check('8. Google Consent Mode: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
+    try {
+      // ---------- 9. asking again on purpose: consentVersion ----------
+      group('9. consentVersion');
+      p = await open({ age: 10 });
+      check('record without cv is valid for consentVersion 1 (default)', 'restored', { consent: !!p.W.FrostBanner.getConsent() }, !!p.W.FrostBanner.getConsent());
+      p.done();
+      p = await open({ age: 10, cfg: JSON.stringify({ consentVersion: 2 }) });
+      check('consentVersion 2: an older record asks again', 'banner shown', { banner: !!p.card(), consent: p.W.FrostBanner.getConsent() }, !!p.card() && p.W.FrostBanner.getConsent() === null);
+      var lg = null; p.W.FrostBanner.on('log', function (x) { lg = x; });
+      p.sr().querySelector('button[data-a="accept"]').click();
+      var recCv = JSON.parse(p.W.localStorage.getItem('fb_consent') || '{}').cv;
+      check('the new record and the log carry consent version 2', 'cv 2, consent_version 2', { cv: recCv, log: lg && lg.consent_version }, recCv === 2 && lg && lg.consent_version === 2);
+      p.done();
+      p = await open({ age: 10, cfg: JSON.stringify({ consentVersion: 'x' }) });
+      check('invalid consentVersion counts as 1', 'restored', { consent: !!p.W.FrostBanner.getConsent() }, !!p.W.FrostBanner.getConsent());
+      p.done();
+    } catch (e) {
+      check('9. asking again on purpose: consentVersion: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
+    try {
+      // ---------- 10. translations ----------
+      group('10. Translations');
+      p = await open({});
+      var langs = p.W.FrostBanner.languages || [];
+      p.done();
+      check('29 built-in languages', '29', langs.length + ': ' + langs.join(' '), langs.length === 29);
+      var enTitle = null, badLangs = [];
+      for (const lg2 of langs) {
+        p = await open({ cfg: JSON.stringify({ lang: lg2 }) });
+        var card = p.card(), txt = card ? card.textContent : '';
+        var title = card && card.querySelector('#fbt') ? card.querySelector('#fbt').textContent : '';
+        p.W.FrostBanner.open();
+        var sw2 = p.sr().querySelectorAll('[data-c]').length, ptxt = p.sr().querySelector('.card').textContent;
+        if (lg2 === 'en') enTitle = title;
+        var probs = [];
+        if (!title) probs.push('no title');
+        if (/undefined|null|\[object/.test(txt + ptxt)) probs.push('undefined text');
+        if (sw2 !== 4) probs.push(sw2 + ' switches');
+        if (lg2 !== 'en' && enTitle && title === enTitle) probs.push('English title');
+        if (probs.length) badLangs.push(lg2 + ': ' + probs.join(', '));
+        p.done();
+      }
+      check('every language renders a complete banner and preferences', 'no problems', badLangs.length ? badLangs : 'all ' + langs.length + ' ok', langs.length === 29 && badLangs.length === 0);
+    } catch (e) {
+      check('10. translations: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
+    try {
+      // ---------- 11. build and version ----------
+      group('11. Build and version');
+      p = await open({});
+      var apiVer = p.W.FrostBanner.version;
+      p.done();
+      var bundleUrl = new URLSearchParams(location.search).get('bundle') || '../dist/fb.min.js';
+      var head = await fetch(bundleUrl, { cache: 'no-store' }).then(function (r) { return r.text(); }).then(function (s) { return s.slice(0, 120); }).catch(function () { return ''; });
+      var hv = (head.match(/FrostBanner v(\d+\.\d+\.\d+)/) || [])[1];
+      check('bundle header version = FrostBanner.version', apiVer, 'header ' + hv + ', API ' + apiVer, !!apiVer && hv === apiVer);
+      var pkg = await fetch('../package.json', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; });
+      check('package.json version = FrostBanner.version, build script present', apiVer + ', npm run build',
+        pkg ? { version: pkg.version, build: pkg.scripts && pkg.scripts.build } : 'no package.json',
+        !!pkg && pkg.version === apiVer && /terser src\/fb\.js/.test(pkg.scripts && pkg.scripts.build || ''));
+
+      var chlog = await fetch('../CHANGELOG.md', { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).catch(function () { return ''; });
+      var hasEntry = chlog.indexOf('## [' + apiVer + ']') > -1;
+      check('CHANGELOG.md has an entry for FrostBanner.version', '## [' + apiVer + ']', chlog ? (hasEntry ? 'found' : 'missing') : 'no CHANGELOG.md', hasEntry);
+    } catch (e) {
+      check('11. build and version: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
+    try {
+      // ---------- 12. README images ----------
+      group('12. README images');
+      var readme = await fetch('../README.md', { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).catch(function () { return ''; });
+      var imgs = (readme.match(/(?:\]\(|src=")(docs\/[^)"\s]+)/g) || []).map(function (m) { return m.replace(/^(\]\(|src=")/, ''); });
+      var imgRes = [];
+      for (const src of imgs) {
+        var res = await fetch('../' + src, { cache: 'no-store' }).catch(function () { return null; });
+        var blob = res && res.ok ? await res.blob() : null;
+        var decoded = false;
+        if (blob) { try { var bmp = await createImageBitmap(blob); decoded = bmp.width > 0; } catch (e) { decoded = false; } }
+        imgRes.push({ src: src, kb: blob ? Math.round(blob.size / 1024) : null, decoded: decoded });
+      }
+      check('every image in the README loads and decodes', 'all ok', imgRes, imgRes.length >= 3 && imgRes.every(function (x) { return x.decoded; }));
+      check('README images are light (each under 150 KB)', 'all < 150 KB', imgRes.map(function (x) { return x.src + ' ' + x.kb + ' KB'; }),
+        imgRes.length >= 3 && imgRes.every(function (x) { return x.kb !== null && x.kb < 150; }));
+    } catch (e) {
+      check('12. README images: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
+    try {
+      // ---------- 13. public API ----------
+      group('13. Public API');
+      p = await open({}, '13. configure({ template: "midnight", accent: "#e0a33a" }): dark banner with orange buttons');
+      var api = p.W.FrostBanner;
+      check('API methods documented in the README exist', 'open, show, configure, getConsent, on, reset, templates, languages, version',
+        ['open', 'show', 'configure', 'getConsent', 'on', 'reset'].filter(function (m) { return typeof api[m] !== 'function'; }).concat(
+          Array.isArray(api.templates) && api.templates.length === 14 ? [] : ['templates']).concat(typeof api.version === 'string' ? [] : ['version']),
+        ['open', 'show', 'configure', 'getConsent', 'on', 'reset'].every(function (m) { return typeof api[m] === 'function'; }) &&
+          Array.isArray(api.templates) && api.templates.length === 14 && typeof api.version === 'string');
+      api.configure({ template: 'midnight', accent: '#e0a33a' });
+      await tick(100);
+      var wcls = p.sr().querySelector('.w');
+      check('configure() redraws with the new template and accent', 'dark theme, accent #e0a33a',
+        { dark: wcls.classList.contains('dark'), accent: getComputedStyle(wcls).getPropertyValue('--a').trim() },
+        wcls.classList.contains('dark') && getComputedStyle(wcls).getPropertyValue('--a').trim() === '#e0a33a');
+      p.sr().querySelector('button[data-a="reject"]').click();
+      api.show(); await tick(100);
+      check('show() brings the banner back after a choice', 'main banner shown', { main: !!p.sr().querySelector('.card.m') }, !!p.sr().querySelector('.card.m'));
+      p = await open({ cfg: JSON.stringify({ layout: 'chat' }) });
+      check('chat layout renders (typing indicator code path)', 'banner card present', { card: !!p.card() }, !!p.card());
+      await tick(1000);
+      check('chat layout: typing indicator ends after ~0.9 s', 'no .typing', { typing: !!p.sr().querySelector('.typing') }, !p.sr().querySelector('.typing'));
+      p.sr().querySelector('button[data-a="accept"]').click();
+      var fab = p.sr().querySelector('.fab');
+      check('floating button has the "Cookie settings" label', 'aria-label = title = Cookie settings',
+        fab ? { label: fab.getAttribute('aria-label'), title: fab.getAttribute('title') } : 'no fab',
+        fab && fab.getAttribute('aria-label') === 'Cookie settings' && fab.getAttribute('title') === 'Cookie settings');
+      p.done();
+    } catch (e) {
+      check('13. public API: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
+    try {
+      // ---------- 14. Global Privacy Control ----------
+      group('14. Global Privacy Control');
+      async function gpcCase(params, how) {
+        var pp = await open(params), rec = null;
+        pp.W.FrostBanner.on('log', function (x) { rec = x; });
+        if (how === 'accept') pp.sr().querySelector('button[data-a="accept"]').click();
+        else { pp.W.FrostBanner.open(); pp.sr().querySelector('input[data-c="marketing"]').click(); pp.sr().querySelector('button[data-a="save"]').click(); }
+        var cc = pp.W.FrostBanner.getConsent(); pp.done();
+        return { marketing: cc && cc.marketing, analytics: cc && cc.analytics, gpc: rec && rec.gpc };
+      }
+      var g1 = await gpcCase({}, 'accept');
+      check('no GPC: "Accept all" includes marketing', 'marketing on, no gpc flag', g1, g1.marketing === true && g1.analytics === true && !g1.gpc);
+      var g2 = await gpcCase({ gpc: '1' }, 'accept');
+      check('GPC: "Accept all" leaves marketing off, logged with gpc', 'marketing off, analytics on, gpc true', g2, g2.marketing === false && g2.analytics === true && g2.gpc === true);
+      var g3 = await gpcCase({ gpc: '1' }, 'prefs');
+      check('GPC: marketing switched on explicitly in the preferences is allowed', 'marketing on', g3, g3.marketing === true);
+      var g4 = await gpcCase({ gpc: '1', cfg: JSON.stringify({ respectGpc: false }) }, 'accept');
+      check('GPC with respectGpc: false: "Accept all" includes marketing', 'marketing on', g4, g4.marketing === true && !g4.gpc);
+    } catch (e) {
+      check('14. Global Privacy Control: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
 
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
