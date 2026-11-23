@@ -905,12 +905,22 @@ if (!FB_LOCAL) {
         await waitFor(function () { return pp.W.order.indexOf('lib') > -1; }, 5000);
         var idBefore = JSON.parse(pp.W.localStorage.getItem('fb_consent') || '{}').id;
         pp.W.__beforeStart = true;
-        var reloadEvt = false; pp.W.addEventListener('frostbanner:reload', function () { reloadEvt = true; });
+        var reloadEvt = false, afterReload = null, shownAfterReload = false, oldW = pp.W;
+        oldW.addEventListener('frostbanner:shown', function () { if (reloadEvt) shownAfterReload = true; });
+        oldW.addEventListener('frostbanner:reload', function () {
+          reloadEvt = true;
+          // right after start() returns (same task, before the page goes away)
+          Promise.resolve().then(function () {
+            var h = oldW.document.getElementById('frostbanner');
+            afterReload = { status: oldW.FrostBanner.getStatus(), banner: !!(h && h.shadowRoot && h.shadowRoot.querySelector('.card.m')) };
+          });
+        });
         await tick(2000);   // settings arrive, start() runs
         await waitFor(function () { var Wn = pp.f.contentWindow; return Wn && Wn.FrostBanner && Wn.document.readyState === 'complete' && Wn.FrostBanner.getStatus() !== 'pending'; }, 8000);
         var Wn = pp.f.contentWindow;
         var denied = Array.prototype.filter.call(Wn.dataLayer || [], function (e) { return e[0] === 'consent' && e[1] === 'update'; }).map(function (e) { return e[2].analytics_storage; });
-        return { pp: pp, reloaded: !Wn.__beforeStart, reloadEvt: reloadEvt, status: Wn.FrostBanner.getStatus(), source: Wn.FrostBanner.getSource(),
+        return { pp: pp, reloaded: !Wn.__beforeStart, reloadEvt: reloadEvt, afterReload: afterReload, shownAfterReload: shownAfterReload,
+          status: Wn.FrostBanner.getStatus(), source: Wn.FrostBanner.getSource(),
           consent: Wn.FrostBanner.getConsent(), lastUpdate: denied[denied.length - 1], idBefore: idBefore };
       }
       var assignTo = function (a, b) { for (var k in b) a[k] = b[k]; return a; };
@@ -918,6 +928,9 @@ if (!FB_LOCAL) {
       check('choice before start(), categories changed by the final settings: withdrawn, page reloaded, banner asks again', 'reload, shown, null, no consent',
         { reloaded: ec.reloaded, event: ec.reloadEvt, status: ec.status, source: ec.source, consent: ec.consent },
         ec.reloaded && ec.reloadEvt && ec.status === 'shown' && ec.source === null && ec.consent === null);
+      check('while that reload starts: no banner, no "shown" event, status pending', 'no banner, no shown, pending',
+        { afterReload: ec.afterReload, shownAfterReload: ec.shownAfterReload },
+        !!ec.afterReload && ec.afterReload.status === 'pending' && !ec.afterReload.banner && !ec.shownAfterReload);
       ec.pp.done();
       ec = await earlyThenChanged({ reloadOnWithdraw: false });
       check('same with reloadOnWithdraw: false: no reload, banner asks again, Consent Mode back to denied', 'no reload, shown, null, analytics denied',

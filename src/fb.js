@@ -709,7 +709,10 @@
       // stored record is invalid for these settings, so the reloaded page just shows the banner).
       if (Object.keys(ran).length && cfg.reloadOnWithdraw !== false && !cfg.container && !preview) {
         emit('reload', { categories: Object.keys(ran) });
+        // The page is going away: no banner and no 'shown' now; the reloaded page asks.
+        stored = null; state = null; source = null; status = 'pending';
         try { location.reload(); } catch (e) {}
+        return;
       }
     }
     stored = null; draft = { necessary: true }; state = null; source = null;
