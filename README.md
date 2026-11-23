@@ -7,7 +7,7 @@ Beautiful cookie consent banners that block trackers until visitors agree.<br>
 <a href="https://frostbanner.com">Website</a> · <a href="https://app.frostbanner.com/app/">Dashboard</a> · <a href="#install">Install</a> · <a href="#javascript-api">API</a>
 </p>
 
-![Try all 14 styles on a live banner](docs/styles.png)
+![Try all 14 styles on a live banner](docs/styles.webp)
 
 This repository contains the source code of the **FrostBanner widget**: the script that shows the banner on your website, blocks scripts and embeds until consent and sends Google Consent Mode v2 signals. It is open so that anyone can check what it does on a visitor's device.
 
@@ -34,6 +34,8 @@ Create a free account at [app.frostbanner.com](https://app.frostbanner.com/app/)
 ```
 
 Style, texts, categories and language are set in the dashboard and published without touching your site again. Every decision is stored in your consent log.
+
+![The banner editor in the FrostBanner dashboard](docs/editor.webp)
 
 ## Block scripts until consent
 

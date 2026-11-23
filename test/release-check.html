@@ -536,6 +536,22 @@ if (!FB_LOCAL) {
     var hasEntry = chlog.indexOf('## [' + apiVer + ']') > -1;
     check('CHANGELOG.md has an entry for FrostBanner.version', '## [' + apiVer + ']', chlog ? (hasEntry ? 'found' : 'missing') : 'no CHANGELOG.md', hasEntry);
 
+    // ---------- 12. README images ----------
+    group('12. README images');
+    var readme = await fetch('../README.md', { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).catch(function () { return ''; });
+    var imgs = (readme.match(/(?:\]\(|src=")(docs\/[^)"\s]+)/g) || []).map(function (m) { return m.replace(/^(\]\(|src=")/, ''); });
+    var imgRes = [];
+    for (const src of imgs) {
+      var res = await fetch('../' + src, { cache: 'no-store' }).catch(function () { return null; });
+      var blob = res && res.ok ? await res.blob() : null;
+      var decoded = false;
+      if (blob) { try { var bmp = await createImageBitmap(blob); decoded = bmp.width > 0; } catch (e) { decoded = false; } }
+      imgRes.push({ src: src, kb: blob ? Math.round(blob.size / 1024) : null, decoded: decoded });
+    }
+    check('every image in the README loads and decodes', 'all ok', imgRes, imgRes.length >= 3 && imgRes.every(function (x) { return x.decoded; }));
+    check('README images are light (each under 150 KB)', 'all < 150 KB', imgRes.map(function (x) { return x.src + ' ' + x.kb + ' KB'; }),
+      imgRes.length >= 3 && imgRes.every(function (x) { return x.kb !== null && x.kb < 150; }));
+
     // ---------- summary ----------
     var failed = results.filter(function (r) { return !r.ok; });
     var s = document.getElementById('summary');
