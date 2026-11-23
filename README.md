@@ -83,6 +83,17 @@ FrostBanner sends the Consent Mode default (everything denied except `security_s
 
 **Be careful with `region`.** Outside the listed regions Google tags start with consent granted and may set cookies before the visitor chooses — that includes EU visitors whose country you did not list. Use it only to exclude regions where consent is not required, and list every region where it is. (With Global Privacy Control the advertising keys still start denied.)
 
+## Google Tag Manager mode
+
+If Consent Mode is handled by the FrostBanner template in Google Tag Manager, set `gtm: true` in the inline config. FrostBanner then sends no `gtag('consent', …)` or `gtag('set', …)` commands of its own (and the `consentMode` options above are ignored), so the template is the only source of consent signals. The banner, script and iframe blocking, the consent log and all events (`change`, `shown`, …) work as usual; the `consentmode` event still fires, with `gtm: true` in its details.
+
+```html
+<script>window.frostBannerConfig = { gtm: true };</script>
+<script src="https://app.frostbanner.com/v1/fb.js" data-site="YOUR_SITE_ID"></script>
+```
+
+`gtm` is read only from the inline config (the dashboard settings arrive too late to change it) and only the boolean `true` switches it on.
+
 ## JavaScript API
 
 ```js

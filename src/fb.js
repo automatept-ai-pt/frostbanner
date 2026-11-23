@@ -163,8 +163,14 @@
   }
 
   // ---------- Google Consent Mode v2 ----------
+  // GTM mode (inline config gtm: true): the FrostBanner template in Google Tag Manager passes the
+  // consent to Google, so fb.js sends no gtag('consent', …) / gtag('set', …) commands and does not
+  // define a gtag() function. Everything else (banner, blocking, events, log) works as usual; the
+  // 'consentmode' event still fires, with gtm: true. Read once from the inline config: dashboard
+  // settings arrive later and cannot switch it on or off.
+  var gtmMode = user.gtm === true;
   w.dataLayer = w.dataLayer || [];
-  if (typeof w.gtag !== 'function') w.gtag = function () { w.dataLayer.push(arguments); };
+  if (!gtmMode && typeof w.gtag !== 'function') w.gtag = function () { w.dataLayer.push(arguments); };
   // Options (inline config only: the default must be sent before any Google tag loads, i.e. before
   // the dashboard settings arrive): consentMode: { region: ['ES', 'PT'], waitForUpdate: 500,
   // adsDataRedaction: true, urlPassthrough: true }.
@@ -175,6 +181,7 @@
   }
   function gcm(kind, c) {
     var o = gcmState(c);
+    if (gtmMode) { emit('consentmode', { kind: kind, state: o, gtm: true }); return; }
     if (kind === 'default') {
       var g = cfg.consentMode && typeof cfg.consentMode === 'object' ? cfg.consentMode : {};
       var wait = +g.waitForUpdate;

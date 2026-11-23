@@ -48,8 +48,9 @@
   window.pwned = 0;
   window.order = [];
   window.fbEvents = [];
-  ['shown', 'change', 'script', 'embed'].forEach(function (n) {
-    addEventListener('frostbanner:' + n, function () { fbEvents.push(n); });
+  window.fbDetails = [];
+  ['shown', 'change', 'script', 'embed', 'consentmode'].forEach(function (n) {
+    addEventListener('frostbanner:' + n, function (e) { fbEvents.push(n); fbDetails.push({ name: n, detail: e.detail }); });
   });
   window.frostBannerConfig = Object.assign({ site: 'demo', lang: 'en', maxAgeDays: 180 },
     JSON.parse(q.get('cfg') || '{}'));
@@ -744,6 +745,37 @@ if (!FB_LOCAL) {
       p.done();
     } catch (e) {
       check('15. review findings: group stopped by an exception', 'no exception', String(e && e.message || e), false);
+    }
+
+    // ---------- 16. GTM mode ----------
+    try {
+      group('16. GTM mode (gtm: true)');
+      var gcmCalls = function (pp) {
+        return Array.prototype.filter.call(pp.W.dataLayer || [], function (e) { return e && (e[0] === 'consent' || e[0] === 'set'); }).length;
+      };
+      p = await open({ cfg: JSON.stringify({ gtm: true, consentMode: { adsDataRedaction: true, urlPassthrough: true, region: ['ES'] } }) });
+      check('GTM mode: no gtag consent/set commands on load, no gtag() defined', '0 commands, gtag undefined',
+        { commands: gcmCalls(p), gtag: typeof p.W.gtag }, gcmCalls(p) === 0 && typeof p.W.gtag === 'undefined');
+      check('GTM mode: banner shown and "shown" event fired', 'banner + shown', { banner: !!p.card(), shown: p.W.fbEvents.indexOf('shown') > -1 },
+        !!p.card() && p.W.fbEvents.indexOf('shown') > -1);
+      var chg = null; p.W.FrostBanner.on('change', function (x) { chg = x; });
+      acceptAnalyticsOnly(p);
+      await waitFor(function () { return p.W.order.indexOf('lib') > -1; });
+      check('GTM mode: "change" event with the choices, blocked analytics scripts run', 'change analytics true, lib ran',
+        { change: chg && chg.choices, libRan: p.W.order.indexOf('lib') > -1 }, !!chg && chg.choices.analytics === true && chg.choices.marketing === false && p.W.order.indexOf('lib') > -1);
+      var cmEv = p.W.fbDetails.filter(function (x) { return x.name === 'consentmode'; }).map(function (x) { return x.detail; });
+      check('GTM mode: still no gtag commands after the choice; "consentmode" event has gtm: true', '0 commands, events with gtm: true',
+        { commands: gcmCalls(p), consentmodeEvents: cmEv.map(function (d) { return d.kind + (d.gtm ? '/gtm' : ''); }) },
+        gcmCalls(p) === 0 && cmEv.length >= 2 && cmEv.every(function (d) { return d.gtm === true; }));
+      p.W.FrostBanner.reset(); await tick(100);
+      check('GTM mode: reset() sends no gtag command either', '0 commands', gcmCalls(p), gcmCalls(p) === 0);
+      p.done();
+      p = await open({ cfg: JSON.stringify({ gtm: 'true' }) });
+      check('gtm: "true" (a string) is not GTM mode: Consent Mode default is sent', '1 consent default',
+        dl(p, 'consent', 'default').length, dl(p, 'consent', 'default').length === 1);
+      p.done();
+    } catch (e) {
+      check('16. GTM mode: group stopped by an exception', 'no exception', String(e && e.message || e), false);
     }
 
     // ---------- summary ----------

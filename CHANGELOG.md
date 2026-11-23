@@ -10,6 +10,7 @@ All notable changes to the FrostBanner widget. The format follows [Keep a Change
 - Global Privacy Control: when the browser sends the GPC signal, "Accept all" leaves Marketing off; the visitor can still switch it on in the preferences (`respectGpc: false` turns this off).
 - `consentVersion`: raise it to ask every visitor again (for example after a cookie policy change).
 - Google Consent Mode options in the inline config: `consentMode.waitForUpdate`, `adsDataRedaction`, `urlPassthrough`, `region`.
+- Google Tag Manager mode: with `gtm: true` in the inline config FrostBanner sends no Consent Mode commands of its own and leaves them to the GTM template; banner, blocking, log and events work as usual.
 - The consent log record includes the banner language (`lang`), a fingerprint of the texts shown (`text_hash`), `consent_version` and, with Global Privacy Control, `gpc`.
 - When a visitor withdraws a category whose scripts already ran on the page, the page reloads so they stop (`reloadOnWithdraw: false` turns this off; event `reload`).
 - Blocked scripts and iframes added after page load (single-page apps, lazy-loaded content) are handled.
